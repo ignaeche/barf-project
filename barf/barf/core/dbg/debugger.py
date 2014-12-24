@@ -52,13 +52,14 @@ class ProcessControl(object):
         self.process = None
         self.last_signal = []
 
-    def start_process(self, binary, ea_start, ea_end):
+    def start_process(self, binary, args, ea_start, ea_end):
         self.binary = binary
         self.filename = binary.filename
+        self.args = list(args)
         self.ea_start = ea_start
         self.ea_end   = ea_end
 
-        pid = createChild([self.filename], 0)
+        pid = createChild([self.filename]+self.args, 0)
         self.process = self.dbg.addProcess(pid, is_attached=1)
 
         #if end_addr:
