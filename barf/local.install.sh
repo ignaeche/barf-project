@@ -4,8 +4,10 @@ temp_dir=dependencies
 
 # Install basic stuff
 #sudo apt-get install -y binutils-dev build-essential g++ nasm
-#sudo apt-get install -y python-setuptools python-dev
+#sudo apt-get install -y python-setuptools python-dev python-ptrace
 #sudo apt-get install -y graphviz xdot
+#sudo apt-get install -y autoconf
+#sudo apt-get install -y libc6-dev-i386
 
 # Create temp directory
 rm -rf $temp_dir
@@ -37,8 +39,9 @@ autoconf
 python scripts/mk_make.py --nodotnet
 cd build/
 make
+mkdir -p ~/.local/bin/
 cp z3 ~/.local/bin/
-cd ../..
+cd ../../..
 
 # Install CVC4 dependencies
 #sudo apt-get install -y libboost-all-dev libantlr3c-dev libgmp-dev
