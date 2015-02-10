@@ -3,7 +3,8 @@ CC = gcc
 .PHONY: all clean
 
 all: branch1 branch2 branch3 branch4 complex1 constraint1 constraint2 \
-	constraint3 helloworld1 gadget1 gadget2 serial1 stack1 loop1 loop2
+	constraint3 helloworld1 gadget1 gadget2 serial1 stack1 loop1 loop2 \
+	taint1 taint2
 
 branch1: branch1.c
 	$(CC) -m32 -o branch1 branch1.c
@@ -55,6 +56,16 @@ loop1: loop1.asm
 
 loop2: loop2.c
 	$(CC) -m32 -o loop2 loop2.c
+
+taint1: taint1.asm
+	nasm -felf32 taint1.asm -o taint1.o
+	ld -melf_i386 taint1.o -o taint1
+	rm taint1.o
+
+taint2: taint2.asm
+	nasm -felf32 taint2.asm -o taint2.o
+	ld -melf_i386 taint2.o -o taint2
+	rm taint2.o
 
 clean:
 	rm -f branch1
