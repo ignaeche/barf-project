@@ -205,8 +205,8 @@ class BARF(object):
             addr = process.getInstrPointer()
             ins = process.readBytes(addr, 20)
 
-            asm, size = self.disassembler.disassemble(ins, addr)
-            yield addr-size, asm, self.ir_translator.translate(asm)
+            asm = self.disassembler.disassemble(ins, addr)
+            yield addr-asm.size, asm, self.ir_translator.translate(asm)
 
             process.singleStep()
             event = pcontrol.wait_event()
