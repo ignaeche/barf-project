@@ -137,3 +137,30 @@ class ProcessControl(object):
         #error("New breakpoint: %s" % bp)
         return bp
 
+    def get_context(self, registers, mapper):
+        context = {}
+
+        for reg in registers:
+            # print reg
+            if reg in mapper:
+                base, offset = mapper[reg]
+                value = self.process.getreg(base)
+
+                # print base, value
+
+                context[reg] = self._extract_value(value, offset, 32)
+
+        value = self.process.getreg('eflags')
+
+        context['eflags'] = self._extract_value(value, 0, 32)
+
+        return context
+
+    def _extract_value(self, main_value, offset, size):
+        return (main_value >> offset) & 2**size-1
+
+    def _insert_value(self, main_value, value_to_insert, offset, size):
+        main_value &= ~((2**size-1) << offset)
+        main_value |= (value_to_insert & 2**size-1) << offset
+
+        return main_value
