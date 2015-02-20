@@ -125,14 +125,18 @@ def __fix_reil_flags(self, reil_context, x86_context):
 def _extract_value(main_value, offset, size):
     return (main_value >> offset) & 2**size-1
 
-if __name__ == "__main__":
-    args = dict(enumerate(sys.argv))
+def get_tainted_operands(instr, emulator):
+    reg_operands = [oprnd for oprnd in instr.operands if isinstance(oprnd, ReilRegisterOperand)]
+    taints = [oprnd for oprnd in reg_operands if emulator.is_tainted(oprnd.name)]
+
+    return taints
+
+def main(args):
     try:
         filename = os.path.abspath(args[1])
         ea_start = int(args.setdefault(2, "0x0"), 16)
         ea_end   = int(args.setdefault(3, "0x0"), 16)
         barf = BARF(filename)
-
     except Exception as err:
         print err
         print "[-] Error opening file : %s" % filename
@@ -161,12 +165,12 @@ if __name__ == "__main__":
 
     process = pcontrol.start_process(binary, args, ea_start, ea_end)
 
-    # read_addr = 0x80483b0 << 0x8    # taint
-    read_addr = 0x80483f0 << 0x8    # serial
+    # read_addr = 0x080483b0 << 0x8   # taint
+    read_addr = 0x080483f0 << 0x8   # serial
 
+    branches_taint_data = []
     tainted_instrs = []
-    curr_tainted_instrs = []
-    initial_taints = {}
+    initial_taints = []
     addrs_to_vars = {}
 
     while pcontrol:
@@ -203,8 +207,7 @@ if __name__ == "__main__":
                 # Extract read function arguments from stack.
                 print "[+] Intercepting 'read' function..."
 
-                rsp = process.getreg("rsp")
-                esp = rsp & 2**32-1
+                esp = process.getreg("rsp") & 2**32-1
 
                 count = struct.unpack("<I", process.readBytes(esp + 0x8, 4))[0]
                 buf = struct.unpack("<I", process.readBytes(esp + 0x4, 4))[0]
@@ -237,8 +240,9 @@ if __name__ == "__main__":
                 # Taint memory address.
                 ir_emulator._mem.taint(buf, bytes_read * 8)
 
+                # Keep record of inital taints.
                 for i in xrange(0, bytes_read):
-                    initial_taints[buf + i] = True
+                    initial_taints.append(buf + i)
 
                 break
 
@@ -254,7 +258,7 @@ if __name__ == "__main__":
                 if ir_emulator.is_tainted(cond.name):
                     print "    Tainted JCC!!!!"
 
-                    curr_tainted_instrs.append(reil_instr)
+                    tainted_instrs.append(reil_instr)
 
                     # Output restrictions on condition.
                     if cond.name in ir_emulator.registers:
@@ -267,16 +271,18 @@ if __name__ == "__main__":
                     else:
                         raise Exception("Error!")
 
-                    tainted_instrs.append((addr, list(curr_tainted_instrs), cond.name, cond.size, cond_value))
+                    branches_taint_data.append({
+                        'branch_address' : addr,
+                        'tainted_instructions' : list(tainted_instrs),
+                        'branch_condition_register' : cond,
+                        'branch_condition_value' : cond_value,
+                    })
                 else:
                     print "    Not tainted JCC!!!!"
             else:
                 # Add instructions with tainted operands to a list.
-                reg_operands = [oprnd for oprnd in reil_instr.operands if isinstance(oprnd, ReilRegisterOperand)]
-                taints = [ir_emulator.is_tainted(oprnd.name) for oprnd in reg_operands]
-
-                if any(taints):
-                    curr_tainted_instrs.append(reil_instr)
+                if len(get_tainted_operands(reil_instr, ir_emulator)) > 0:
+                    tainted_instrs.append(reil_instr)
 
             # Pair registers names with tainted memory addresses.
             if reil_instr.mnemonic == ReilMnemonic.LDM and \
@@ -294,14 +300,6 @@ if __name__ == "__main__":
 
         process.singleStep()
 
-        # Check native context vs emulated context.
-        # x86_context_out = pcontrol.get_context(registers, mapper)
-
-        # ctx_eq = __compare_contexts(context, x86_context_out, reil_context_out)
-
-        # if not ctx_eq:
-        #     __print_contexts(context, x86_context_out, reil_context_out)
-
         event = pcontrol.wait_event()
 
         if isinstance(event, ProcessExit):
@@ -316,22 +314,24 @@ if __name__ == "__main__":
     print("# Tainted Instructions (REIL):")
     print("# " + "=" * 76 + " #")
 
-    print "Total branches : ", len(tainted_instrs)
+    print "Total branches : ", len(branches_taint_data)
 
-    # branch_addr, instr_list, cond_name, cond_size, cond_value = tainted_instrs[0]
-
-    for idx, tainted_instrs_info in enumerate(tainted_instrs):
-
+    for idx, branch_taint_data in enumerate(branches_taint_data):
         logger.info("Branch analysis #%d" % idx)
 
         branches = []
 
         c_analyzer.reset(full=True)
 
-        branch_addr, instr_list, cond_name, cond_size, cond_value = tainted_instrs_info
+        branch_addr = branch_taint_data['branch_address']
+        instr_list = branch_taint_data['tainted_instructions']
+        branch_cond = branch_taint_data['branch_condition_register']
+        branch_value = branch_taint_data['branch_condition_value']
 
-        # for instr in instr_list:
-        #     print instr
+        cond_name, cond_size, cond_value = branch_cond.name, branch_cond.size, branch_value
+
+        for instr in instr_list:
+            print instr
 
         # Add initial tainted addresses to the code analyzer.
         mem_exprs = {}
@@ -342,7 +342,7 @@ if __name__ == "__main__":
                 mem_expr = c_analyzer.get_memory_expr(addr_expr, size / 8, mode="pre")
 
                 # Extra restriction: generate printable ASCIIs.
-                c_analyzer.set_preconditions([mem_expr >= 0x20, mem_expr <= 0x7e])
+                # c_analyzer.set_preconditions([mem_expr >= 0x20, mem_expr <= 0x7e])
 
                 mem_exprs[tainted_addr] = mem_expr
 
@@ -381,3 +381,7 @@ if __name__ == "__main__":
 
         print("~" * 80)
         print("~" * 80)
+
+
+if __name__ == "__main__":
+    main(dict(enumerate(sys.argv)))
