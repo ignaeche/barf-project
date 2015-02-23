@@ -5,6 +5,8 @@ import os
 import struct
 import sys
 
+from collections import defaultdict
+
 from barf import BARF
 
 from barf.core.dbg.debugger import ProcessControl, ProcessExit, ProcessSignal, ProcessEnd
@@ -134,10 +136,24 @@ def get_tainted_operands(instr, emulator):
     # check all operands for 'taintness' (or change the tainting 
     # strategy).
 
-    reg_operands = [oprnd for oprnd in instr.operands if isinstance(oprnd, ReilRegisterOperand)]
-    taints = [oprnd for oprnd in reg_operands if emulator.is_tainted(oprnd.name)]
+    tainted_oprnds = []
 
-    return taints
+    if instr.mnemonic == ReilMnemonic.LDM:
+        addr = read_operand(instr.operands[0], emulator)
+        size = instr.operands[2].size
+
+        if emulator._mem.is_tainted(addr, size):
+            tainted_oprnds.append(addr)
+    else:
+        reg_oprnds = [oprnd for oprnd in instr.operands if isinstance(oprnd, ReilRegisterOperand)]
+        tainted_oprnds = [oprnd for oprnd in reg_oprnds if emulator.is_tainted(oprnd.name)]
+
+    return tainted_oprnds
+
+    # reg_operands = [oprnd for oprnd in instr.operands if isinstance(oprnd, ReilRegisterOperand)]
+    # taints = [oprnd for oprnd in reg_operands if emulator.is_tainted(oprnd.name)]
+
+    # return taints
 
 def process_tainted_branch_data(c_analyzer, arch_info, branches_taint_data, initial_taints, addrs_to_vars):
     print("Total branches : %d" % len(branches_taint_data))
@@ -230,12 +246,12 @@ def intercept_read_function(pcontrol, process, barf, addr, size):
     buf = struct.unpack("<I", process.readBytes(esp + 0x4, 4))[0]
     fd = struct.unpack("<I", process.readBytes(esp + 0x0, 4))[0]
 
-    print("\t[+] Extracting parameters...")
-    print("\t\tfd: %d" % fd)
-    print("\t\tbuf: 0x%08x" % buf)
-    print("\t\tcount: 0x%x" % count)
+    print("[+] Extracting 'read'parameters...")
+    print("\tfd: %d" % fd)
+    print("\tbuf: 0x%08x" % buf)
+    print("\tcount: 0x%x" % count)
 
-    print("\t[+] Executing function...")
+    print("[+] Executing 'read' function...")
 
     next_addr = addr + size
 
@@ -251,10 +267,29 @@ def intercept_read_function(pcontrol, process, barf, addr, size):
 
     bytes_read = process.getreg("rax") & 2**32-1
 
-    print("\t[+] Extracting return value...")
-    print("\t\t# bytes read: %d" % bytes_read)
+    print("[+] Extracting 'read' return value...")
+    print("\t# bytes read: %d" % bytes_read)
 
     return buf, bytes_read
+
+def read_operand(operand, emulator):
+    context = emulator._regs
+
+    if isinstance(operand, ReilRegisterOperand):
+        if operand.name in context:
+            value = context[operand.name]
+        elif operand.name in emulator._reg_access_mapper:
+            base_reg, offset = emulator._reg_access_mapper[operand.name]
+            main_value = context[base_reg]
+            value = _extract_value(main_value, offset, operand.size)
+        else:
+            Exception("Invalid operand: %s" % str(operand))
+    elif isinstance(operand, ReilImmediateOperand):
+        value = operand.immediate
+    else:
+        Exception("Invalid operand: %s" % str(operand))
+
+    return value
 
 def main(args):
     try:
@@ -297,7 +332,7 @@ def main(args):
     branches_taint_data = []
     tainted_instrs = []
     initial_taints = []
-    addrs_to_vars = {}
+    addrs_to_vars = defaultdict(lambda: [])
 
     while pcontrol:
         # Get some bytes from current IP.
@@ -313,60 +348,63 @@ def main(args):
         # Translate native instruction to REIL.
         reil_instrs = barf.ir_translator.translate(asm_instr)
 
-        # Emulate current instruction.
-        if "unkn" in [reil_instr.mnemonic_str for reil_instr in reil_instrs]:
-            # If not supported, skip emulation.
-            print "Skip emulation...."
-        else:
-            context = pcontrol.get_context(registers, mapper)
-
-            reil_context_out, _ = ir_emulator.execute_lite(reil_instrs, context=context)
+        # Set REIL emulator context.
+        ir_emulator._regs = dict(pcontrol.get_context(registers, mapper))
 
         # Process REIL instructions.
         for reil_instr in reil_instrs:
             # print("{0:14}{1}".format("", reil_instr))
 
+            # If not supported, skip...
+            if reil_instr.mnemonic == ReilMnemonic.UNKN:
+                continue
+
+            reil_context_out, _ = ir_emulator.execute_lite([reil_instr])
+
             # Intercept 'read' function call.
-            if reil_instr.mnemonic == ReilMnemonic.JCC and \
-                isinstance(reil_instr.operands[2], ReilImmediateOperand) and \
-                reil_instr.operands[2].immediate == read_addr:
+            if reil_instr.mnemonic == ReilMnemonic.JCC:
+                target = read_operand(reil_instr.operands[2], ir_emulator)
 
-                # Extract 'read' parameters.
-                buf, bytes_read = intercept_read_function(pcontrol, process, barf, addr, size)
+                if target == read_addr:
+                    # Extract 'read' parameters.
+                    buf, bytes_read = intercept_read_function(pcontrol, process, barf, addr, size)
 
-                # Taint memory address.
-                ir_emulator._mem.taint(buf, bytes_read * 8)
+                    # Taint memory address.
+                    ir_emulator._mem.taint(buf, bytes_read * 8)
 
-                # Keep record of inital taints.
-                for i in xrange(0, bytes_read):
-                    initial_taints.append(buf + i)
+                    # Keep record of inital taints.
+                    for i in xrange(0, bytes_read):
+                        initial_taints.append(buf + i)
 
-                break
+                    break
+
+            # Add instructions with tainted operands to a list.
+            if len(get_tainted_operands(reil_instr, ir_emulator)) > 0:
+                tainted_instrs.append(reil_instr)
+
+            # Pair registers names with tainted memory addresses.
+            if reil_instr.mnemonic == ReilMnemonic.LDM and \
+                isinstance(reil_instr.operands[0], ReilRegisterOperand):
+
+                reg_name = reil_instr.operands[0].name
+
+                addr = read_operand(reil_instr.operands[0], ir_emulator)
+                size = reil_instr.operands[2].size
+
+                if ir_emulator._mem.is_tainted(addr, size):
+                    addrs_to_vars[addr].append((reg_name, size))
 
             # If there is a conditional jump depending on tainted data
             # generate condition.
             if reil_instr.mnemonic == ReilMnemonic.JCC and \
                 isinstance(reil_instr.operands[0], ReilRegisterOperand):
 
-                print "[+] Analyzing JCC..."
-
                 cond = reil_instr.operands[0]
 
                 if ir_emulator.is_tainted(cond.name):
-                    print "    Tainted JCC!!!!"
+                    print("[+] Analyzing JCC: Tainted")
 
-                    tainted_instrs.append(reil_instr)
-
-                    # Output restrictions on condition.
-                    if cond.name in ir_emulator.registers:
-                        cond_value = ir_emulator.registers[cond.name]
-                    elif cond.name in mapper:
-                        base_reg, offset = mapper[cond.name]
-                        base_reg = 'eflags' if base_reg == 'rflags' else base_reg
-                        main_value = reil_context_out[base_reg]
-                        cond_value = _extract_value(main_value, offset, cond.size)
-                    else:
-                        raise Exception("Error!")
+                    cond_value = read_operand(cond, ir_emulator)
 
                     branches_taint_data.append({
                         'branch_address' : addr,
@@ -375,36 +413,18 @@ def main(args):
                         'branch_condition_value' : cond_value,
                     })
                 else:
-                    print "    Not tainted JCC!!!!"
-            else:
-                # Add instructions with tainted operands to a list.
-                if len(get_tainted_operands(reil_instr, ir_emulator)) > 0:
-                    tainted_instrs.append(reil_instr)
-
-            # Pair registers names with tainted memory addresses.
-            if reil_instr.mnemonic == ReilMnemonic.LDM and \
-                isinstance(reil_instr.operands[0], ReilRegisterOperand):
-
-                reg_name = reil_instr.operands[0].name
-                addr = ir_emulator.registers[reg_name]
-                size = reil_instr.operands[2].size
-
-                if ir_emulator._mem.is_tainted(addr, size):
-                    if addr not in addrs_to_vars:
-                        addrs_to_vars[addr]  = [(reg_name, size)]
-                    else:
-                        addrs_to_vars[addr] += [(reg_name, size)]
+                    print("[+] Analyzing JCC: Not Tainted")
 
         process.singleStep()
 
         event = pcontrol.wait_event()
 
         if isinstance(event, ProcessExit):
-            print "process exit"
+            print("[+] Process exit.")
             break
 
         if isinstance(event, ProcessEnd):
-            print "process end"
+            print("[+] Process end.")
             break
 
     process_tainted_branch_data(c_analyzer, arch_info, branches_taint_data, initial_taints, addrs_to_vars)
