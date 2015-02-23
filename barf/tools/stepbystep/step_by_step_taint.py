@@ -9,13 +9,12 @@ from collections import defaultdict
 
 from barf import BARF
 
-from barf.core.dbg.debugger import ProcessControl, ProcessExit, ProcessSignal, ProcessEnd
-from barf.core.dbg.testcase import GetTestcase, prepare_inputs
-from barf.core.reil import ReilImmediateOperand
-from barf.core.reil import ReilMnemonic
-from barf.arch.x86.x86base import X86ArchitectureInformation
 from barf.arch import ARCH_X86_MODE_32
 from barf.arch import ARCH_X86_MODE_64
+from barf.arch.x86.x86base import X86ArchitectureInformation
+from barf.core.dbg.debugger import ProcessControl, ProcessExit, ProcessEnd
+from barf.core.dbg.testcase import prepare_inputs
+from barf.core.reil import ReilImmediateOperand
 from barf.core.reil import ReilMnemonic
 from barf.core.reil import ReilRegisterOperand
 
@@ -94,7 +93,7 @@ def __print_flags(flags_reg):
 
     for bit, flag in flags.items():
         flag_str = flag.upper() if flags_reg & 2**bit else flag.lower()
-        out +=  flag_str + " "
+        out += flag_str + " "
 
     return out[:-1]
 
@@ -102,8 +101,6 @@ def __fix_reil_flag(arch_info, reil_context, x86_context, flag):
     reil_context_out = dict(reil_context)
 
     flags_reg = 'eflags' if 'eflags' in reil_context_out else 'rflags'
-
-    arch_size = arch_info.architecture_size
 
     _, bit = arch_info.registers_access_mapper()[flag]
 
@@ -115,7 +112,7 @@ def __fix_reil_flag(arch_info, reil_context, x86_context, flag):
 
     return reil_context_out
 
-def __fix_reil_flags(self, reil_context, x86_context):
+def __fix_reil_flags(reil_context, x86_context):
     reil_context_out = dict(reil_context)
 
     # Remove this when AF and PF are implemented.
@@ -128,12 +125,12 @@ def _extract_value(main_value, offset, size):
     return (main_value >> offset) & 2**size-1
 
 def get_tainted_operands(instr, emulator):
-    # NOTE: It should only check source operand to test 'taintness'. 
-    # However, this does not cover memory access instructions. For 
-    # instance, LDM. In this case, the first operand contains the 
+    # NOTE: It should only check source operand to test 'taintness'.
+    # However, this does not cover memory access instructions. For
+    # instance, LDM. In this case, the first operand contains the
     # address to access memory but it is not tainted (what is tainted is
     # the value that is pointed by that address). So, it is necessary to
-    # check all operands for 'taintness' (or change the tainting 
+    # check all operands for 'taintness' (or change the tainting
     # strategy).
 
     tainted_oprnds = []
@@ -145,23 +142,18 @@ def get_tainted_operands(instr, emulator):
         if emulator._mem.is_tainted(addr, size):
             tainted_oprnds.append(addr)
     else:
-        reg_oprnds = [oprnd for oprnd in instr.operands if isinstance(oprnd, ReilRegisterOperand)]
-        tainted_oprnds = [oprnd for oprnd in reg_oprnds if emulator.is_tainted(oprnd.name)]
+        reg_oprnds = [oprnd for oprnd in instr.operands
+                        if isinstance(oprnd, ReilRegisterOperand)]
+        tainted_oprnds = [oprnd for oprnd in reg_oprnds
+                            if emulator.is_tainted(oprnd.name)]
 
     return tainted_oprnds
-
-    # reg_operands = [oprnd for oprnd in instr.operands if isinstance(oprnd, ReilRegisterOperand)]
-    # taints = [oprnd for oprnd in reg_operands if emulator.is_tainted(oprnd.name)]
-
-    # return taints
 
 def process_tainted_branch_data(c_analyzer, arch_info, branches_taint_data, initial_taints, addrs_to_vars):
     print("Total branches : %d" % len(branches_taint_data))
 
     for idx, branch_taint_data in enumerate(branches_taint_data):
         logger.info("Branch analysis #%d" % idx)
-
-        branches = []
 
         c_analyzer.reset(full=True)
 
@@ -187,7 +179,6 @@ def process_tainted_branch_data(c_analyzer, arch_info, branches_taint_data, init
 
         # Add instructions to the code analyzer.
         for instr in instr_list[:-1]:
-
             if instr.mnemonic == ReilMnemonic.JCC and \
                 isinstance(instr.operands[0], ReilRegisterOperand):
                 op1_var = c_analyzer._translator._translate_src_oprnd(instr.operands[0])
@@ -228,25 +219,26 @@ def process_tainted_branch_data(c_analyzer, arch_info, branches_taint_data, init
         print("# Memory State")
         print(ruler)
 
-        for tainted_addr, mem in sorted(mem_exprs.items()):
-            mem_value = c_analyzer.get_expr_value(mem)
+        for tainted_addr, mem_expr in sorted(mem_exprs.items()):
+            value = c_analyzer.get_expr_value(mem_expr)
 
-            print("mem @ 0x%08x : %s (%s)" % (tainted_addr, hex(mem_value), chr(mem_value)))
+            print("mem @ 0x%08x : %02x (%s)" % (tainted_addr, value, chr(value)))
 
         print("~" * 80)
         print("~" * 80)
 
 def intercept_read_function(pcontrol, process, barf, addr, size):
-    # Extract read function arguments from stack.
     print("[+] Intercepting 'read' function...")
+
+    print("[+] Extracting 'read'parameters...")
 
     esp = process.getreg("rsp") & 2**32-1
 
+    # Extract read function arguments from stack.
     count = struct.unpack("<I", process.readBytes(esp + 0x8, 4))[0]
     buf = struct.unpack("<I", process.readBytes(esp + 0x4, 4))[0]
     fd = struct.unpack("<I", process.readBytes(esp + 0x0, 4))[0]
 
-    print("[+] Extracting 'read'parameters...")
     print("\tfd: %d" % fd)
     print("\tbuf: 0x%08x" % buf)
     print("\tcount: 0x%x" % count)
@@ -265,9 +257,10 @@ def intercept_read_function(pcontrol, process, barf, addr, size):
     asm_instr = barf.disassembler.disassemble(instr, addr)
     size = asm_instr.size
 
+    print("[+] Extracting 'read' return value...")
+
     bytes_read = process.getreg("rax") & 2**32-1
 
-    print("[+] Extracting 'read' return value...")
     print("\t# bytes read: %d" % bytes_read)
 
     return buf, bytes_read
@@ -294,28 +287,31 @@ def read_operand(operand, emulator):
 def main(args):
     try:
         filename = os.path.abspath(args[1])
+
         ea_start = int(args.setdefault(2, "0x0"), 16)
-        ea_end   = int(args.setdefault(3, "0x0"), 16)
+        ea_end = int(args.setdefault(3, "0x0"), 16)
+
         barf = BARF(filename)
     except Exception as err:
-        print err
-        print "[-] Error opening file : %s" % filename
+        print(err)
+        print("[-] Error opening file : %s" % filename)
 
         sys.exit(1)
 
-    print("[+] Executing x86 to REIL...")
-
     if barf.testcase is None:
-        print "No testcase specified. Execution impossible"
+        print("No testcase specified. Execution impossible")
+
         sys.exit(-1)
 
     binary = barf.binary
     args = prepare_inputs(barf.testcase["args"] + barf.testcase["files"])
     pcontrol = ProcessControl()
+
+    print("[+] Executing x86 to REIL...")
+
     process = pcontrol.start_process(binary, args, ea_start, ea_end)
 
     ir_emulator = barf.ir_emulator
-    smt_translator = barf.smt_translator
     c_analyzer = barf.code_analyzer
 
     arch_info = X86ArchitectureInformation(ARCH_X86_MODE_32)
@@ -359,7 +355,7 @@ def main(args):
             if reil_instr.mnemonic == ReilMnemonic.UNKN:
                 continue
 
-            reil_context_out, _ = ir_emulator.execute_lite([reil_instr])
+            ir_emulator.execute_lite([reil_instr])
 
             # Intercept 'read' function call.
             if reil_instr.mnemonic == ReilMnemonic.JCC:
@@ -431,4 +427,5 @@ def main(args):
 
 
 if __name__ == "__main__":
+    # NOTE: For now, it works only for programs compile in 32 bits.
     main(dict(enumerate(sys.argv)))
