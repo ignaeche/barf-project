@@ -126,10 +126,135 @@ def _extract_value(main_value, offset, size):
     return (main_value >> offset) & 2**size-1
 
 def get_tainted_operands(instr, emulator):
+    # NOTE: It should only check source operand to test 'taintness'. 
+    # However, this does not cover memory access instructions. For 
+    # instance, LDM. In this case, the first operand contains the 
+    # address to access memory but it is not tainted (what is tainted is
+    # the value that is pointed by that address). So, it is necessary to
+    # check all operands for 'taintness' (or change the tainting 
+    # strategy).
+
     reg_operands = [oprnd for oprnd in instr.operands if isinstance(oprnd, ReilRegisterOperand)]
     taints = [oprnd for oprnd in reg_operands if emulator.is_tainted(oprnd.name)]
 
     return taints
+
+def process_tainted_branch_data(c_analyzer, arch_info, branches_taint_data, initial_taints, addrs_to_vars):
+    print("Total branches : %d" % len(branches_taint_data))
+
+    for idx, branch_taint_data in enumerate(branches_taint_data):
+        logger.info("Branch analysis #%d" % idx)
+
+        branches = []
+
+        c_analyzer.reset(full=True)
+
+        branch_addr = branch_taint_data['branch_address']
+        instr_list = branch_taint_data['tainted_instructions']
+        branch_cond = branch_taint_data['branch_condition_register']
+        branch_value = branch_taint_data['branch_condition_value']
+
+        cond_name, cond_size, cond_value = branch_cond.name, branch_cond.size, branch_value
+
+        # Add initial tainted addresses to the code analyzer.
+        mem_exprs = {}
+
+        for tainted_addr in initial_taints:
+            for reg_name, size in addrs_to_vars.get(tainted_addr, []):
+                addr_expr = c_analyzer.get_tmp_register_expr(reg_name, 32)
+                mem_expr = c_analyzer.get_memory_expr(addr_expr, size / 8, mode="pre")
+
+                # Extra restriction: generate printable ASCIIs.
+                # c_analyzer.set_preconditions([mem_expr >= 0x20, mem_expr <= 0x7e])
+
+                mem_exprs[tainted_addr] = mem_expr
+
+        # Add instructions to the code analyzer.
+        for instr in instr_list[:-1]:
+
+            if instr.mnemonic == ReilMnemonic.JCC and \
+                isinstance(instr.operands[0], ReilRegisterOperand):
+                op1_var = c_analyzer._translator._translate_src_oprnd(instr.operands[0])
+                imm = c_analyzer.get_immediate_expr(0x1, instr.operands[0].size)
+
+                c_analyzer._solver.add(op1_var == imm)
+
+            c_analyzer.add_instruction(instr)
+
+        # Get a SMT variable for the branch condition.
+        if cond_name in arch_info.registers_flags:
+            cond = c_analyzer.get_register_expr(cond_name, mode="post")
+        else:
+            cond = c_analyzer.get_tmp_register_expr(cond_name, cond_size, mode="post")
+
+        # Set branch condition.
+        c_analyzer.set_postconditions([cond != cond_value])
+
+        # Print result.
+        ruler = "# {} #".format("=" * 76)
+
+        print(ruler)
+        print("# Tainted Instructions")
+        print(ruler)
+
+        for instr in instr_list:
+            print instr
+
+        print(ruler)
+        print("# Branch Information")
+        print(ruler)
+
+        print("Branch number : %d" % idx)
+        print("Branch address : 0x%08x" % branch_addr)
+        print("Branch taken? : %s" % (c_analyzer.get_expr_value(cond) == 1))
+
+        print(ruler)
+        print("# Memory State")
+        print(ruler)
+
+        for tainted_addr, mem in sorted(mem_exprs.items()):
+            mem_value = c_analyzer.get_expr_value(mem)
+
+            print("mem @ 0x%08x : %s (%s)" % (tainted_addr, hex(mem_value), chr(mem_value)))
+
+        print("~" * 80)
+        print("~" * 80)
+
+def intercept_read_function(pcontrol, process, barf, addr, size):
+    # Extract read function arguments from stack.
+    print("[+] Intercepting 'read' function...")
+
+    esp = process.getreg("rsp") & 2**32-1
+
+    count = struct.unpack("<I", process.readBytes(esp + 0x8, 4))[0]
+    buf = struct.unpack("<I", process.readBytes(esp + 0x4, 4))[0]
+    fd = struct.unpack("<I", process.readBytes(esp + 0x0, 4))[0]
+
+    print("\t[+] Extracting parameters...")
+    print("\t\tfd: %d" % fd)
+    print("\t\tbuf: 0x%08x" % buf)
+    print("\t\tcount: 0x%x" % count)
+
+    print("\t[+] Executing function...")
+
+    next_addr = addr + size
+
+    pcontrol.breakpoint(next_addr)
+    pcontrol.cont()
+
+    # Instruction after read function call.
+    addr = process.getInstrPointer()
+    instr = process.readBytes(addr, 20)
+
+    asm_instr = barf.disassembler.disassemble(instr, addr)
+    size = asm_instr.size
+
+    bytes_read = process.getreg("rax") & 2**32-1
+
+    print("\t[+] Extracting return value...")
+    print("\t\t# bytes read: %d" % bytes_read)
+
+    return buf, bytes_read
 
 def main(args):
     try:
@@ -152,19 +277,20 @@ def main(args):
     binary = barf.binary
     args = prepare_inputs(barf.testcase["args"] + barf.testcase["files"])
     pcontrol = ProcessControl()
+    process = pcontrol.start_process(binary, args, ea_start, ea_end)
 
     ir_emulator = barf.ir_emulator
     smt_translator = barf.smt_translator
     c_analyzer = barf.code_analyzer
 
     arch_info = X86ArchitectureInformation(ARCH_X86_MODE_32)
+    # NOTE: Temporary hack to interface correctly with ptrace.debbuger.
     arch_info64 = X86ArchitectureInformation(ARCH_X86_MODE_64)
 
     registers = arch_info.registers_gp_base
     mapper = arch_info64.registers_access_mapper()
 
-    process = pcontrol.start_process(binary, args, ea_start, ea_end)
-
+    # Hardcoded 'read' function addresses.
     # read_addr = 0x080483b0 << 0x8   # taint
     read_addr = 0x080483f0 << 0x8   # serial
 
@@ -196,46 +322,17 @@ def main(args):
 
             reil_context_out, _ = ir_emulator.execute_lite(reil_instrs, context=context)
 
+        # Process REIL instructions.
         for reil_instr in reil_instrs:
             # print("{0:14}{1}".format("", reil_instr))
 
-            # Catch 'read' function call.
+            # Intercept 'read' function call.
             if reil_instr.mnemonic == ReilMnemonic.JCC and \
                 isinstance(reil_instr.operands[2], ReilImmediateOperand) and \
                 reil_instr.operands[2].immediate == read_addr:
 
-                # Extract read function arguments from stack.
-                print "[+] Intercepting 'read' function..."
-
-                esp = process.getreg("rsp") & 2**32-1
-
-                count = struct.unpack("<I", process.readBytes(esp + 0x8, 4))[0]
-                buf = struct.unpack("<I", process.readBytes(esp + 0x4, 4))[0]
-                fd = struct.unpack("<I", process.readBytes(esp + 0x0, 4))[0]
-
-                print "\t[+] Extracting parameters..."
-                print "\t\tfd: %d" % fd
-                print "\t\tbuf: 0x%08x" % buf
-                print "\t\tcount: 0x%x" % count
-
-                print "\t[+] Executing function..."
-
-                next_addr = addr + size
-
-                pcontrol.breakpoint(next_addr)
-                pcontrol.cont()
-
-                # Instruction after read function call.
-                addr = process.getInstrPointer()
-                instr = process.readBytes(addr, 20)
-
-                asm_instr = barf.disassembler.disassemble(instr, addr)
-                size = asm_instr.size
-
-                bytes_read = process.getreg("rax") & 2**32-1
-
-                print "\t[+] Extracting return value..."
-                print "\t\t# bytes read: %d" % bytes_read
+                # Extract 'read' parameters.
+                buf, bytes_read = intercept_read_function(pcontrol, process, barf, addr, size)
 
                 # Taint memory address.
                 ir_emulator._mem.taint(buf, bytes_read * 8)
@@ -310,77 +407,7 @@ def main(args):
             print "process end"
             break
 
-    print("# " + "=" * 76 + " #")
-    print("# Tainted Instructions (REIL):")
-    print("# " + "=" * 76 + " #")
-
-    print "Total branches : ", len(branches_taint_data)
-
-    for idx, branch_taint_data in enumerate(branches_taint_data):
-        logger.info("Branch analysis #%d" % idx)
-
-        branches = []
-
-        c_analyzer.reset(full=True)
-
-        branch_addr = branch_taint_data['branch_address']
-        instr_list = branch_taint_data['tainted_instructions']
-        branch_cond = branch_taint_data['branch_condition_register']
-        branch_value = branch_taint_data['branch_condition_value']
-
-        cond_name, cond_size, cond_value = branch_cond.name, branch_cond.size, branch_value
-
-        for instr in instr_list:
-            print instr
-
-        # Add initial tainted addresses to the code analyzer.
-        mem_exprs = {}
-
-        for tainted_addr in initial_taints:
-            for reg_name, size in addrs_to_vars.get(tainted_addr, []):
-                addr_expr = c_analyzer.get_tmp_register_expr(reg_name, 32)
-                mem_expr = c_analyzer.get_memory_expr(addr_expr, size / 8, mode="pre")
-
-                # Extra restriction: generate printable ASCIIs.
-                # c_analyzer.set_preconditions([mem_expr >= 0x20, mem_expr <= 0x7e])
-
-                mem_exprs[tainted_addr] = mem_expr
-
-        # Add instructions to the code analyzer.
-        for instr in instr_list[:-1]:
-
-            if instr.mnemonic == ReilMnemonic.JCC and \
-                isinstance(instr.operands[0], ReilRegisterOperand):
-                op1_var = c_analyzer._translator._translate_src_oprnd(instr.operands[0])
-                imm = c_analyzer.get_immediate_expr(0x1, instr.operands[0].size)
-
-                c_analyzer._solver.add(op1_var == imm)
-
-            c_analyzer.add_instruction(instr)
-
-        # Get a SMT variable for the branch condition.
-        if cond_name in arch_info.registers_flags:
-            cond = c_analyzer.get_register_expr(cond_name, mode="post")
-        else:
-            cond = c_analyzer.get_tmp_register_expr(cond_name, cond_size, mode="post")
-
-        # Set branch condition.
-        c_analyzer.set_postconditions([cond != cond_value])
-
-        # Print result.
-        print("-" * 80)
-
-        print("Branch #%d" % idx)
-        print("Branch address : 0x%08x" % branch_addr)
-        print("Branch taken? : %s" % (c_analyzer.get_expr_value(cond) == 1))
-
-        for tainted_addr, mem in sorted(mem_exprs.items()):
-            mem_value = c_analyzer.get_expr_value(mem)
-
-            print("mem @ 0x%08x : %s (%s)" % (tainted_addr, hex(mem_value), chr(mem_value)))
-
-        print("~" * 80)
-        print("~" * 80)
+    process_tainted_branch_data(c_analyzer, arch_info, branches_taint_data, initial_taints, addrs_to_vars)
 
 
 if __name__ == "__main__":
