@@ -20,6 +20,8 @@ from barf.core.reil import ReilRegisterOperand
 logger = logging.getLogger(__name__)
 
 def get_tainted_operands(instr, emulator):
+    """Returns an instruction's tainted operands.
+    """
     tainted_oprnds = []
 
     if instr.mnemonic == ReilMnemonic.LDM:
@@ -36,11 +38,15 @@ def get_tainted_operands(instr, emulator):
 
     return tainted_oprnds
 
-def process_tainted_branch_data(c_analyzer, branches_taint_data):
+def analyze_tainted_branch_data(c_analyzer, branches_taint_data):
+    """For each input branch (which depends on tainted input), it
+    prints the values needed to avoid taking that branch.
+
+    """
     print("Total branches : %d" % len(branches_taint_data))
 
     for idx, branch_taint_data in enumerate(branches_taint_data):
-        logger.info("Branch analysis #%d" % idx)
+        logger.info("Branch analysis #{}".format(idx))
 
         c_analyzer.reset(full=True)
 
@@ -80,7 +86,7 @@ def process_tainted_branch_data(c_analyzer, branches_taint_data):
 
         # Print results.
         ruler = "# {0} #".format("=" * 76)
-        title = "{ruler}\n#{{title}}\n{ruler}".format(ruler=ruler)
+        title = "{ruler}\n# {{title}}\n{ruler}".format(ruler=ruler)
         footer = "{0}\n{0}".format("~" * 80)
 
         print(title.format(title="Tainted Instructions"))
@@ -102,6 +108,10 @@ def process_tainted_branch_data(c_analyzer, branches_taint_data):
         print(footer)
 
 def intercept_read_function(pcontrol, process, barf, addr, size):
+    """Intercepts calls to the 'read' function and extracts its
+    parameters and return value.
+
+    """
     print("[+] Intercepting 'read' function...")
 
     print("[+] Extracting 'read'parameters...")
@@ -109,13 +119,13 @@ def intercept_read_function(pcontrol, process, barf, addr, size):
     esp = process.getreg("rsp") & 2**32-1
 
     # Extract read function arguments from stack.
-    count = struct.unpack("<I", process.readBytes(esp + 0x8, 4))[0]
-    buf = struct.unpack("<I", process.readBytes(esp + 0x4, 4))[0]
-    fd = struct.unpack("<I", process.readBytes(esp + 0x0, 4))[0]
+    param0 = struct.unpack("<I", process.readBytes(esp + 0x0, 4))[0]
+    param1 = struct.unpack("<I", process.readBytes(esp + 0x4, 4))[0]
+    param2 = struct.unpack("<I", process.readBytes(esp + 0x8, 4))[0]
 
-    print("\tfd: %d" % fd)
-    print("\tbuf: 0x%08x" % buf)
-    print("\tcount: 0x%x" % count)
+    print("\tfd: %d" % param0)
+    print("\tbuf: 0x%08x" % param1)
+    print("\tcount: 0x%x" % param2)
 
     print("[+] Executing 'read' function...")
 
@@ -133,36 +143,22 @@ def intercept_read_function(pcontrol, process, barf, addr, size):
 
     print("[+] Extracting 'read' return value...")
 
-    bytes_read = process.getreg("rax") & 2**32-1
+    return_value = process.getreg("rax") & 2**32-1
 
-    print("\t# bytes read: %d" % bytes_read)
+    print("\t# bytes read: %d" % return_value)
 
-    return buf, bytes_read
+    return param1, return_value
 
-def main(args):
-    try:
-        filename = os.path.abspath(args[1])
+def process_binary(barf, ea_start, ea_end):
+    """Executes the input binary and tracks Information about the
+    branches that depends on input data.
 
-        ea_start = int(args.setdefault(2, "0x0"), 16)
-        ea_end = int(args.setdefault(3, "0x0"), 16)
-
-        barf = BARF(filename)
-    except Exception as err:
-        print(err)
-        print("[-] Error opening file : %s" % filename)
-
-        sys.exit(1)
-
-    if barf.testcase is None:
-        print("No testcase specified. Execution impossible")
-
-        sys.exit(-1)
+    """
+    print("[+] Executing x86 to REIL...")
 
     binary = barf.binary
     args = prepare_inputs(barf.testcase["args"] + barf.testcase["files"])
     pcontrol = ProcessControl()
-
-    print("[+] Executing x86 to REIL...")
 
     process = pcontrol.start_process(binary, args, ea_start, ea_end)
 
@@ -201,7 +197,7 @@ def main(args):
         reil_instrs = barf.ir_translator.translate(asm_instr)
 
         # Set REIL emulator context.
-        ir_emulator._regs = dict(pcontrol.get_context(registers, mapper))
+        ir_emulator.context = pcontrol.get_context(registers, mapper)
 
         # Process REIL instructions.
         for reil_instr in reil_instrs:
@@ -280,9 +276,39 @@ def main(args):
             print("[+] Process end.")
             break
 
-    process_tainted_branch_data(c_analyzer, branches_taint_data)
+    return branches_taint_data
+
+def main(args):
+    """Main function.
+    """
+    try:
+        filename = os.path.abspath(args[1])
+
+        ea_start = int(args.setdefault(2, "0x0"), 16)
+        ea_end = int(args.setdefault(3, "0x0"), 16)
+
+        barf = BARF(filename)
+    except Exception as err:
+        print(err)
+        print("[-] Error opening file : %s" % filename)
+
+        sys.exit(1)
+
+    if barf.testcase is None:
+        print("No testcase specified. Execution impossible")
+
+        sys.exit(-1)
+
+    branches_taint_data = process_binary(barf, ea_start, ea_end)
+
+    analyze_tainted_branch_data(barf.code_analyzer, branches_taint_data)
 
 
 if __name__ == "__main__":
-    # NOTE: For now, it works only for programs compiled in 32 bits.
+    # NOTES:
+    # 1. For now, it works only for programs compiled in 32 bits.
+    # 2. For now, it only taints data from the 'read' function.
+    # 3. For now, you have to HARDCODE the 'read' function address for
+    # each binary.
+
     main(dict(enumerate(sys.argv)))
