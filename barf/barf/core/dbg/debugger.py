@@ -60,7 +60,7 @@ class ProcessControl(object):
             addr = self.binary.plt[func]
             self.breakpoint(addr)
             self.hooked_functions[addr] = func, self.filename
-            print hex(addr), func
+            print "[+] Hooking",func,"at",hex(addr)
 
         if ea_start <> 0x0:
             assert(0)
