@@ -27,6 +27,8 @@ Binary Interface Module.
 """
 
 import logging
+import subprocess
+import re
 
 from pefile import PE
 from pybfd.bfd import Bfd
@@ -153,8 +155,12 @@ class BinaryFile(object):
         try:
             bfd = Bfd(filename)
 
+            self._sections = bfd.sections
+
+            self._populate_plt_got(filename,0x0)
+
             # get text section
-            stext = bfd.sections.get(".text")
+            stext = self._sections.get(".text")
 
             self._section_text = stext.content
             self._section_text_start = stext.vma
@@ -212,6 +218,29 @@ class BinaryFile(object):
 
         if not self._section_text:
             raise Exception("Could not open the file.")
+
+    def _populate_plt_got(self, path, base):
+        plt, got = dict(), dict()
+
+        cmd = ['/usr/bin/objdump', '-d', path]
+        out = subprocess.Popen(cmd, stdout=subprocess.PIPE).communicate()[0]
+        got32 = '[^j]*jmp\s+\*0x(\S+)'
+        got64 = '[^#]*#\s+(\S+)'
+        lines = re.findall('([a-fA-F0-9]+)\s+<([^@<]+)@plt>:(%s|%s)' % (got32, got64), out)
+
+        for addr, name, _, gotaddr32, gotaddr64 in lines:
+            addr = int(addr, 16)
+
+            try:
+               gotaddr = int(gotaddr32 or gotaddr64, 16)
+            except ValueError:
+               gotaddr = None
+
+            plt[name] = base + addr
+            got[name] = gotaddr
+
+        self.plt = plt
+        self.got = got
 
     def _map_architecture(self, bfd_arch_name):
         arch_map = {
