@@ -25,26 +25,18 @@
 """Generic Debugger Interface.
 """
 from signal import SIGTRAP
+from time import sleep
 
 from run import createChild
+from event import *
 #from mm  import MemoryMaps
 from ptrace.debugger import PtraceDebugger
-from ptrace.debugger import ProcessExit, ProcessSignal, ProcessEvent
 from ptrace.error import PtraceError
 #from ptrace.ctypes_tools import (truncateWord, formatWordHex, formatAddress,
 #                                 formatAddressRange, word2bytes)
 
-ProcessExit = ProcessExit
-ProcessSignal = ProcessSignal
-
-class ProcessEnd(ProcessEvent):
-  pass
-
-
-
 class Debugger(PtraceDebugger):
     pass
-
 
 class ProcessControl(object):
     def __init__(self):
@@ -52,20 +44,26 @@ class ProcessControl(object):
         self.process = None
         self.last_signal = []
 
-    def start_process(self, binary, args, ea_start, ea_end):
+    def start_process(self, binary, args, ea_start, ea_end, hooked_functions = []):
         self.binary = binary
         self.filename = binary.filename
         self.args = list(args)
         self.ea_start = ea_start
         self.ea_end   = ea_end
+        self.hooked_functions = dict()
 
         pid = createChild([self.filename]+self.args, 0)
         self.process = self.dbg.addProcess(pid, is_attached=1)
 
-        #if end_addr:
-        #    self.breakpoint(end_addr)
+        for func in hooked_functions:
 
-        if ea_start:
+            addr = self.binary.plt[func]
+            self.breakpoint(addr)
+            self.hooked_functions[addr] = func, self.filename
+            print hex(addr), func
+
+        if ea_start <> 0x0:
+            assert(0)
             self.breakpoint(ea_start)
             self.cont()
 
@@ -79,22 +77,6 @@ class ProcessControl(object):
                 return ProcessEnd(self.process, "Last instruction reached")
 
         return event
-
-    """
-    def get_process(self):
-        return self.process
-
-    """
-    def detect_addr(self, ip):
-       # Hit breakpoint?
-       #ip = self.process.getInstrPointer()
-       print hex(ip)
-       breakpoint = self.process.findBreakpoint(ip-1)
-       breakpoint.desinstall(set_ip=True)
-       #self.mm = MemoryMaps(self.binary.filename, self.process.pid)
-       #print self.mm
-       #assert(0)
-
 
     def _continue_process(self, process, signum=None):
         if not signum and process in self.last_signal:
@@ -112,6 +94,8 @@ class ProcessControl(object):
 
     def cont(self, signum=None):
 
+ 
+        event = None
         process = self.process
         process.syscall_state.clear()
         if process == self.process:
@@ -119,9 +103,33 @@ class ProcessControl(object):
         else:
             self._continueProcess(process)
 
+        #print process.getInstrPointer()
+
         signal = self.dbg.waitSignals()
         if signal.signum == SIGTRAP:
-            self.detect_addr(process.getInstrPointer())
+            ip = process.getInstrPointer()
+            ip = ip - 1
+
+            if (ip) in self.hooked_functions:
+               name, module = self.hooked_functions[ip]
+               event = Call(name, module)
+               event.detect_parameters(self.process)
+               event.detect_return_address(self.process)
+
+               return_address = event.get_return_address()
+               self.breakpoint(return_address)
+
+               self.process.cont()
+               self.dbg.waitProcessEvent()
+               event.detect_return_value(self.process) 
+
+               ip = process.getInstrPointer()
+               ip = ip - 1
+ 
+               breakpoint = self.process.findBreakpoint(ip)
+               breakpoint.desinstall(set_ip=True)
+
+        return event
 
 
     def breakpoint(self, address):
