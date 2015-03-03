@@ -2,7 +2,6 @@
 
 import logging
 import os
-import struct
 import sys
 
 from collections import defaultdict
@@ -16,6 +15,8 @@ from barf.core.dbg.debugger import ProcessControl, ProcessExit, ProcessEnd
 from barf.core.dbg.testcase import prepare_inputs
 from barf.core.reil import ReilMnemonic
 from barf.core.reil import ReilRegisterOperand
+
+from barf.core.dbg.event import Call
 
 logger = logging.getLogger(__name__)
 
@@ -38,17 +39,23 @@ def get_tainted_operands(instr, emulator):
 
     return tainted_oprnds
 
-def analyze_tainted_branch_data(c_analyzer, branches_taint_data):
+def analyze_tainted_branch_data(c_analyzer, branches_taint_data, iteration):
     """For each input branch (which depends on tainted input), it
     prints the values needed to avoid taking that branch.
 
     """
     print("Total branches : %d" % len(branches_taint_data))
 
+    new_inputs = []
+
     for idx, branch_taint_data in enumerate(branches_taint_data):
         logger.info("Branch analysis #{}".format(idx))
 
         c_analyzer.reset(full=True)
+
+        # TODO: Simplify tainted instructions, i.e, remove superfluous
+        # instructions.
+        # TODO: 'Concretize' not tainted instructions' operands.
 
         branch_addr = branch_taint_data['branch_address']
         instrs_list = branch_taint_data['tainted_instructions']
@@ -56,6 +63,8 @@ def analyze_tainted_branch_data(c_analyzer, branches_taint_data):
         branch_val = branch_taint_data['branch_condition_value']
         initial_taints = branch_taint_data['initial_taints']
         addrs_to_vars = branch_taint_data['addrs_to_vars']
+        open_files = branch_taint_data['open_files']
+        addrs_to_file = branch_taint_data['addrs_to_file']
 
         # Add initial tainted addresses to the code analyzer.
         mem_exprs = {}
@@ -107,49 +116,89 @@ def analyze_tainted_branch_data(c_analyzer, branches_taint_data):
 
         print(footer)
 
-def intercept_read_function(pcontrol, process, barf, addr, size):
-    """Intercepts calls to the 'read' function and extracts its
-    parameters and return value.
+        # Generate new input file.
+        for fd in open_files:
+            filename = open_files[fd]['filename']
 
-    """
-    print("[+] Intercepting 'read' function...")
+            with open(filename, "rb") as f:
+                byte = f.read(1)
+                file_content = bytearray()
 
-    print("[+] Extracting 'read'parameters...")
+                while byte:
+                    file_content.append(byte)
+                    # Do stuff with byte.
+                    byte = f.read(1)
 
-    esp = process.getreg("rsp") & 2**32-1
+            for tainted_addr, mem_expr in sorted(mem_exprs.items()):
+                value = c_analyzer.get_expr_value(mem_expr)
 
-    # Extract read function arguments from stack.
-    param0 = struct.unpack("<I", process.readBytes(esp + 0x0, 4))[0]
-    param1 = struct.unpack("<I", process.readBytes(esp + 0x4, 4))[0]
-    param2 = struct.unpack("<I", process.readBytes(esp + 0x8, 4))[0]
+                for fd2, pos_list in addrs_to_file[tainted_addr].items():
+                    if fd2 == fd:
+                        for p in pos_list:
+                            file_content[p] = value
 
-    print("\tfd: %d" % param0)
-    print("\tbuf: 0x%08x" % param1)
-    print("\tcount: 0x%x" % param2)
+            print "file content: ", file_content
 
-    print("[+] Executing 'read' function...")
+            name, extension = filename.split(".")
+            name = name.split("_", 1)[0]
 
-    next_addr = addr + size
+            new_filename = name + "_%03d_%03d" % (iteration, idx) + "." + extension
 
-    pcontrol.breakpoint(next_addr)
-    pcontrol.cont()
+            with open(new_filename, "wb") as f:
+                f.write(file_content)
 
-    # Instruction after read function call.
-    addr = process.getInstrPointer()
-    instr = process.readBytes(addr, 20)
+            new_inputs.append(new_filename)
 
-    asm_instr = barf.disassembler.disassemble(instr, addr)
-    size = asm_instr.size
+    return new_inputs
 
-    print("[+] Extracting 'read' return value...")
+def taint_read(process, event, ir_emulator, initial_taints, open_files, file_mem_mapper, addrs_to_file):
+    if isinstance(event, Call):
+        if event.name == "open":
+            pathname_ptr, _ = event.get_typed_parameters()[0]
+            file_desc = event.return_value
 
-    return_value = process.getreg("rax") & 2**32-1
+            # TODO: Get filename.
+            i = 0
+            maxcnt = 1024
+            filename = ""
+            byte = process.readBytes(pathname_ptr+i, 1)
+            while byte != "\x00" and len(filename) < maxcnt:
+                filename += byte
+                i += 1
+                byte = process.readBytes(pathname_ptr+i, 1)
 
-    print("\t# bytes read: %d" % return_value)
+            open_files[file_desc] = {
+                'filename' : filename,
+                'f_pos' : 0
+            }
 
-    return param1, return_value
+        if event.name == "read":
+            file_desc, _ = event.get_typed_parameters()[0]
+            buf, _ = event.get_typed_parameters()[1]
+            bytes_read = event.return_value
 
-def process_binary(barf, ea_start, ea_end):
+            file_curr_pos = open_files[file_desc]['f_pos']
+            fmapper = file_mem_mapper.get(file_desc, {})
+
+            # Taint memory address.
+            ir_emulator.set_memory_taint(buf, bytes_read * 8, True)
+
+            # Keep record of inital taints.
+            for i in xrange(0, bytes_read):
+                fmapper[buf + i] = file_curr_pos + i
+                initial_taints.append(buf + i)
+
+                d_entry = addrs_to_file.get(buf + i, {})
+                l_entry = d_entry.get(file_desc, [])
+                l_entry.append(file_curr_pos + i)
+
+                d_entry[file_desc] = l_entry
+                addrs_to_file[buf + i] = d_entry
+
+            open_files[file_desc]['f_pos'] = bytes_read
+            file_mem_mapper[file_desc] = fmapper
+
+def process_binary(barf, input_file, ea_start, ea_end):
     """Executes the input binary and tracks Information about the
     branches that depends on input data.
 
@@ -157,10 +206,11 @@ def process_binary(barf, ea_start, ea_end):
     print("[+] Executing x86 to REIL...")
 
     binary = barf.binary
-    args = prepare_inputs(barf.testcase["args"] + barf.testcase["files"])
+    # args = prepare_inputs(barf.testcase["args"] + barf.testcase["files"])
+    args = input_file
     pcontrol = ProcessControl()
 
-    process = pcontrol.start_process(binary, args, ea_start, ea_end)
+    process = pcontrol.start_process(binary, args, ea_start, ea_end, hooked_functions=["open", "read"])
 
     ir_emulator = barf.ir_emulator
     c_analyzer = barf.code_analyzer
@@ -173,23 +223,25 @@ def process_binary(barf, ea_start, ea_end):
     registers = arch_info.registers_gp_base
     mapper = arch_info64.registers_access_mapper()
 
-    # Hardcoded 'read' function addresses.
-    # read_addr = 0x080483b0 << 0x8   # taint
-    read_addr = 0x080483f0 << 0x8   # serial
-
     branches_taint_data = []
     tainted_instrs = []
     initial_taints = []
     addrs_to_vars = defaultdict(lambda: [])
+    open_files = {}
+    file_mem_mapper = {}
+    addrs_to_file = {}
+
+    # Continue until the first hooked function.
+    event = pcontrol.cont()
+
+    taint_read(process, event, ir_emulator, initial_taints, open_files, file_mem_mapper, addrs_to_file)
 
     while pcontrol:
         # Get some bytes from current IP.
         addr = process.getInstrPointer()
-        instr = process.readBytes(addr, 20)
 
         # Disassemble current native instruction.
-        asm_instr = barf.disassembler.disassemble(instr, addr)
-        size = asm_instr.size
+        asm_instr = barf.disassembler.disassemble(process.readBytes(addr, 15), addr)
 
         print("0x{0:08x} : {1}".format(addr, asm_instr))
 
@@ -207,25 +259,8 @@ def process_binary(barf, ea_start, ea_end):
             if reil_instr.mnemonic == ReilMnemonic.UNKN:
                 continue
 
+            # Execute REIL instruction
             ir_emulator.execute_lite([reil_instr])
-
-            # Intercept 'read' function call.
-            if reil_instr.mnemonic == ReilMnemonic.JCC:
-                target = ir_emulator.read_operand(reil_instr.operands[2])
-
-                if target == read_addr:
-                    # Extract 'read' parameters.
-                    buf, bytes_read = intercept_read_function(
-                                        pcontrol, process, barf, addr, size)
-
-                    # Taint memory address.
-                    ir_emulator.set_memory_taint(buf, bytes_read * 8, True)
-
-                    # Keep record of inital taints.
-                    for i in xrange(0, bytes_read):
-                        initial_taints.append(buf + i)
-
-                    break
 
             # Add instructions with tainted operands to a list.
             if len(get_tainted_operands(reil_instr, ir_emulator)) > 0:
@@ -249,7 +284,7 @@ def process_binary(barf, ea_start, ea_end):
                 cond = reil_instr.operands[0]
 
                 if ir_emulator.get_operand_taint(cond):
-                    print("[+] Analyzing JCC: Tainted")
+                    print("[+] Tainted JCC")
 
                     cond_value = ir_emulator.read_operand(cond)
 
@@ -260,13 +295,14 @@ def process_binary(barf, ea_start, ea_end):
                         'branch_condition_value' : cond_value,
                         'initial_taints' : list(initial_taints),
                         'addrs_to_vars' : dict(addrs_to_vars),
+                        'open_files' : dict(open_files),
+                        'file_mem_mapper' : dict(file_mem_mapper),
+                        'addrs_to_file' : dict(addrs_to_file),
                     })
-                else:
-                    print("[+] Analyzing JCC: Not Tainted")
 
-        process.singleStep()
+        event = pcontrol.single_step()
 
-        event = pcontrol.wait_event()
+        taint_read(process, event, ir_emulator, initial_taints, open_files, file_mem_mapper, addrs_to_file)
 
         if isinstance(event, ProcessExit):
             print("[+] Process exit.")
@@ -275,6 +311,8 @@ def process_binary(barf, ea_start, ea_end):
         if isinstance(event, ProcessEnd):
             print("[+] Process end.")
             break
+
+    process.terminate()
 
     return branches_taint_data
 
@@ -299,9 +337,26 @@ def main(args):
 
         sys.exit(-1)
 
-    branches_taint_data = process_binary(barf, ea_start, ea_end)
+    input_files = []
 
-    analyze_tainted_branch_data(barf.code_analyzer, branches_taint_data)
+    input_file = prepare_inputs(barf.testcase["args"] + barf.testcase["files"])
+
+    input_files.append(input_file[0])
+
+    iteration = 0
+
+    while input_files and iteration < 10:
+        input_file = input_files.pop()
+
+        print "Processing #%d: %s" % (iteration, input_file)
+
+        branches_taint_data = process_binary(barf, [input_file], ea_start, ea_end)
+
+        new_inputs = analyze_tainted_branch_data(barf.code_analyzer, branches_taint_data, iteration)
+
+        input_files.extend(new_inputs)
+
+        iteration += 1
 
 
 if __name__ == "__main__":
