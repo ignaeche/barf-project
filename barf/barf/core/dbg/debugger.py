@@ -32,8 +32,8 @@ from event import *
 #from mm  import MemoryMaps
 from ptrace.debugger import PtraceDebugger
 from ptrace.error import PtraceError
-#from ptrace.ctypes_tools import (truncateWord, formatWordHex, formatAddress,
-#                                 formatAddressRange, word2bytes)
+from ptrace.ctypes_tools import (truncateWord, formatWordHex, formatAddress,
+                                 formatAddressRange, word2bytes)
 
 class Debugger(PtraceDebugger):
     pass
@@ -63,7 +63,7 @@ class ProcessControl(object):
             print "[+] Hooking",func,"at",hex(addr)
 
         if ea_start <> 0x0:
-            assert(0)
+            # assert(0)
             self.breakpoint(ea_start)
             self.cont()
 
@@ -93,8 +93,6 @@ class ProcessControl(object):
             process.cont()
 
     def cont(self, signum=None):
-
- 
         event = None
         process = self.process
         process.syscall_state.clear()
@@ -111,26 +109,70 @@ class ProcessControl(object):
             ip = ip - 1
 
             if (ip) in self.hooked_functions:
-               name, module = self.hooked_functions[ip]
-               event = Call(name, module)
-               event.detect_parameters(self.process)
-               event.detect_return_address(self.process)
+                name, module = self.hooked_functions[ip]
+                event = Call(name, module)
+                event.detect_parameters(self.process)
+                event.detect_return_address(self.process)
 
-               return_address = event.get_return_address()
-               self.breakpoint(return_address)
+                return_address = event.get_return_address()
+                self.breakpoint(return_address)
 
-               self.process.cont()
-               self.dbg.waitProcessEvent()
-               event.detect_return_value(self.process) 
+                self.process.cont()
+                self.dbg.waitProcessEvent()
+                event.detect_return_value(self.process)
 
-               ip = process.getInstrPointer()
-               ip = ip - 1
- 
-               breakpoint = self.process.findBreakpoint(ip)
-               breakpoint.desinstall(set_ip=True)
+                ip = process.getInstrPointer()
+                ip = ip - 1
+
+                breakpoint = self.process.findBreakpoint(ip)
+                breakpoint.desinstall(set_ip=True)
+            else:
+                breakpoint = self.process.findBreakpoint(ip)
+                breakpoint.desinstall(set_ip=True)
 
         return event
 
+    def single_step(self,signum=None):
+        event = None
+        process = self.process
+        process.syscall_state.clear()
+
+        process.singleStep()
+
+        event = self.wait_event()
+
+        if isinstance(event, ProcessExit) or isinstance(event, ProcessEnd):
+            return event
+        
+        ip = process.getInstrPointer()
+        ip = ip - 1
+
+        if ip in self.hooked_functions:
+            print "ENTERING HOOK FUNCTION"
+            name, module = self.hooked_functions[ip]
+            event = Call(name, module)
+            event.detect_parameters(self.process)
+            event.detect_return_address(self.process)
+
+            return_address = event.get_return_address()
+            self.breakpoint(return_address)
+
+            self.process.cont()
+            self.dbg.waitProcessEvent()
+            event.detect_return_value(self.process)
+
+            ip = process.getInstrPointer()
+            ip = ip - 1
+
+            breakpoint = self.process.findBreakpoint(ip)
+            breakpoint.desinstall(set_ip=True)
+        else:
+            breakpoint = self.process.findBreakpoint(ip)
+
+            if breakpoint:
+                breakpoint.desinstall(set_ip=True)
+
+        return event
 
     def breakpoint(self, address):
 
