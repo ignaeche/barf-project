@@ -2,6 +2,7 @@
 
 import logging
 import os
+import platform
 import sys
 
 from collections import defaultdict
@@ -216,12 +217,22 @@ def process_binary(barf, input_file, ea_start, ea_end):
     c_analyzer = barf.code_analyzer
     c_analyzer.set_arch_info(barf.arch_info)
 
-    arch_info = X86ArchitectureInformation(ARCH_X86_MODE_32)
-    # NOTE: Temporary hack to interface correctly with ptrace.debbuger.
-    arch_info64 = X86ArchitectureInformation(ARCH_X86_MODE_64)
+    native_platform = platform.machine()
+
+    if native_platform == 'i386': 
+        arch_info = X86ArchitectureInformation(ARCH_X86_MODE_32)
+    if native_platform == 'i686':  
+        arch_info = X86ArchitectureInformation(ARCH_X86_MODE_32)
+    elif native_platform == 'x86_64':
+        arch_info = X86ArchitectureInformation(ARCH_X86_MODE_32)
+    else:
+        print("[-] Error executing at platform '%s'" % native_platform)
+        exit(-1)
+
+
 
     registers = arch_info.registers_gp_base
-    mapper = arch_info64.registers_access_mapper()
+    mapper = arch_info.registers_access_mapper()
 
     branches_taint_data = []
     tainted_instrs = []
@@ -263,8 +274,12 @@ def process_binary(barf, input_file, ea_start, ea_end):
             ir_emulator.execute_lite([reil_instr])
 
             # Add instructions with tainted operands to a list.
+            #print reil_instr.operands
+
             if len(get_tainted_operands(reil_instr, ir_emulator)) > 0:
                 tainted_instrs.append(reil_instr)
+ 
+            #print tainted_instrs
 
             # Pair registers names with tainted memory addresses.
             if reil_instr.mnemonic == ReilMnemonic.LDM and \
@@ -303,6 +318,7 @@ def process_binary(barf, input_file, ea_start, ea_end):
         event = pcontrol.single_step()
 
         taint_read(process, event, ir_emulator, initial_taints, open_files, file_mem_mapper, addrs_to_file)
+
 
         if isinstance(event, ProcessExit):
             print("[+] Process exit.")

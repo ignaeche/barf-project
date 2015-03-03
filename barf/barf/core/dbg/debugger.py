@@ -189,16 +189,18 @@ class ProcessControl(object):
 
     def get_context(self, registers, mapper):
         context = {}
-
+        #print "mapper:",mapper
         for reg in registers:
-            # print reg
+            #print "reg",reg
             if reg in mapper:
-                base, offset = mapper[reg]
-                value = self.process.getreg(base)
+                base, offset = reg, mapper[reg]
+            else:
+                base, offset = reg, 0
 
-                # print base, value
-
-                context[reg] = self._extract_value(value, offset, 32)
+            value = self.process.getreg(base)
+            #print "base-value", base, value
+            context[reg] = self._extract_value(value, offset, 32)
+ 
 
         value = self.process.getreg('eflags')
 
