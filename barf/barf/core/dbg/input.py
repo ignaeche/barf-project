@@ -98,6 +98,9 @@ class File(Input):
   def IsValid(self):
     return True
 
+  def GetFilename(self):
+    return self.filename.replace("/", "__")
+
   def GetName(self):
     return "file_"+self.filename.replace("/", "__")
 
