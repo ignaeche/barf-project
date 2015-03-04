@@ -143,7 +143,7 @@ class ProcessControl(object):
 
         if isinstance(event, ProcessExit) or isinstance(event, ProcessEnd):
             return event
-        
+
         ip = process.getInstrPointer()
         ip = ip - 1
 
@@ -191,16 +191,20 @@ class ProcessControl(object):
         context = {}
         #print "mapper:",mapper
         for reg in registers:
+            # FIXME: Temporary ugly hack...
+            if reg == 'rflags':
+                continue
+
             #print "reg",reg
             if reg in mapper:
-                base, offset = reg, mapper[reg]
+                base, offset = mapper[reg]
             else:
                 base, offset = reg, 0
 
             value = self.process.getreg(base)
-            #print "base-value", base, value
+            # print "base-value-offset", base, value, offset
             context[reg] = self._extract_value(value, offset, 32)
- 
+
 
         value = self.process.getreg('eflags')
 
