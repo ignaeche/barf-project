@@ -220,20 +220,18 @@ def process_binary(barf, input_file, ea_start, ea_end):
 
     native_platform = platform.machine()
 
-    if native_platform == 'i386': 
-        arch_info = X86ArchitectureInformation(ARCH_X86_MODE_32)
-    if native_platform == 'i686':  
-        arch_info = X86ArchitectureInformation(ARCH_X86_MODE_32)
+    if native_platform == 'i386':
+        host_arch_info = X86ArchitectureInformation(ARCH_X86_MODE_32)
+    if native_platform == 'i686':
+        host_arch_info = X86ArchitectureInformation(ARCH_X86_MODE_64)
     elif native_platform == 'x86_64':
-        arch_info = X86ArchitectureInformation(ARCH_X86_MODE_32)
+        host_arch_info = X86ArchitectureInformation(ARCH_X86_MODE_64)
     else:
         print("[-] Error executing at platform '%s'" % native_platform)
         exit(-1)
 
-
-
-    registers = arch_info.registers_gp_base
-    mapper = arch_info.registers_access_mapper()
+    registers = barf.arch_info.registers_gp_base
+    mapper = host_arch_info.registers_access_mapper()
 
     branches_taint_data = []
     tainted_instrs = []
@@ -279,7 +277,7 @@ def process_binary(barf, input_file, ea_start, ea_end):
 
             if len(get_tainted_operands(reil_instr, ir_emulator)) > 0:
                 tainted_instrs.append(reil_instr)
- 
+
             #print tainted_instrs
 
             # Pair registers names with tainted memory addresses.
