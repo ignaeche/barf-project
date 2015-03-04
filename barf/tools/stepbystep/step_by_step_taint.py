@@ -223,7 +223,7 @@ def process_binary(barf, input_file, ea_start, ea_end):
     if native_platform == 'i386':
         host_arch_info = X86ArchitectureInformation(ARCH_X86_MODE_32)
     if native_platform == 'i686':
-        host_arch_info = X86ArchitectureInformation(ARCH_X86_MODE_64)
+        host_arch_info = X86ArchitectureInformation(ARCH_X86_MODE_32)
     elif native_platform == 'x86_64':
         host_arch_info = X86ArchitectureInformation(ARCH_X86_MODE_64)
     else:
