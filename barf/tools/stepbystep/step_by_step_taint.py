@@ -4,6 +4,7 @@ import logging
 import os
 import platform
 import sys
+#import time
 
 from collections import defaultdict
 
@@ -357,7 +358,7 @@ def main(args):
 
     input_file = prepare_inputs(barf.testcase["args"] + barf.testcase["files"])
 
-    input_files.append(input_file[0])
+    input_files.append(barf.testcase["files"][0].GetFilename())
 
     iteration = 0
 
@@ -373,6 +374,8 @@ def main(args):
         input_files.extend(new_inputs)
 
         iteration += 1
+
+        #time.sleep(10)
 
 
 if __name__ == "__main__":
