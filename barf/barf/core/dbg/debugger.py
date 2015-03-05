@@ -46,8 +46,13 @@ class ProcessControl(object):
 
     def start_process(self, binary, args, ea_start, ea_end, hooked_functions = []):
         self.binary = binary
+
         self.filename = binary.filename
         self.args = list(args)
+
+        if ea_start == 0x0:
+            ea_start = self.binary.start_address
+
         self.ea_start = ea_start
         self.ea_end   = ea_end
         self.hooked_functions = dict()
@@ -55,18 +60,36 @@ class ProcessControl(object):
         pid = createChild([self.filename]+self.args, 0)
         self.process = self.dbg.addProcess(pid, is_attached=1)
 
+        self.breakpoint(ea_start)
+        self.cont()
+
         for func in hooked_functions:
+            if func in self.binary.plt:
+                addr = self.binary.plt[func]
+                self.breakpoint(addr)
+                self.hooked_functions[addr] = func, self.filename
+                print "[+] Hooking",func,"at",hex(addr)
 
-            addr = self.binary.plt[func]
-            self.breakpoint(addr)
-            self.hooked_functions[addr] = func, self.filename
-            print "[+] Hooking",func,"at",hex(addr)
+        self.mm = self.process.readMappings()
+        self.libs_start = dict()
 
-        if ea_start <> 0x0:
-            # assert(0)
-            self.breakpoint(ea_start)
-            self.cont()
+        for m in self.mm:
+            if m.pathname not in [None, "[vsyscall]", "[vdso]"] and 'x' in m.permissions:
+                self.libs_start[m.pathname] = m.start
 
+        #print self.libs_start
+
+        for lib_filename,lib_binary in self.binary.libs.items():
+
+            for func in hooked_functions:
+                if func in lib_binary.plt:
+                    addr = self.libs_start[lib_filename] + lib_binary.plt[func]
+                    self.breakpoint(addr)
+                    self.hooked_functions[addr] = func, lib_filename
+                    print "[+] Hooking",func,"at",hex(addr), lib_filename
+
+        #print map(str,self.libs_start.keys())
+        #print map(hex,self.libs_start.values())
         return self.process
 
     def wait_event(self):
