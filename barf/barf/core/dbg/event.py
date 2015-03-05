@@ -25,16 +25,22 @@ class Call(ProcessEvent):
     return str(self.name)
     
   def detect_return_address(self, process):
-    addr = process.getreg("esp")
+    addr = process.getStackPointer()#getreg("esp")
     bs = process.readBytes(addr, 4)
+    bs = bs+(8-len(bs))*'\00'
     self.return_address = bytes2word(bs)
+    print hex(self.return_address)
 
   def detect_return_value(self, process):
-    self.return_value = process.getreg("eax")
+    try:
+        self.return_value = process.getreg("rax")
+    except _:
+        self.return_value = process.getreg("eax")
 
   def _detect_parameter(self, offset):
-    addr = self.process.getreg("esp")+offset
+    addr = self.process.getStackPointer()+offset#getreg("esp")+offset
     bs = self.process.readBytes(addr, 4)
+    bs = bs+(8-len(bs))*'\00'
     return bytes2word(bs)
 
   def get_return_address(self):
