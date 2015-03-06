@@ -82,7 +82,7 @@ class BinaryFile(object):
     """Binary file representation.
     """
 
-    def __init__(self, filename):
+    def __init__(self, filename, deps = True):
 
         # File name of the binary file.
         self._filename = filename
@@ -102,6 +102,8 @@ class BinaryFile(object):
 
         # Architecture mode.
         self._arch_mode = None
+
+        self._deps = deps
 
         # Open file
         if filename:
@@ -169,10 +171,6 @@ class BinaryFile(object):
             self._sections = bfd.sections
             self._start_address = bfd.start_address
 
-            # imperfect but good enough shared object detection according to:
-            # https://stackoverflow.com/questions/16302575/distinguish-shared-objects-from-position-independent-executables
-            self.is_shared_object = (".interp" not in self._sections) or ("libc.so.6" in self.filename)
-
             self._populate_plt_got(filename,0x0)
 
             # get text section
@@ -197,15 +195,12 @@ class BinaryFile(object):
 
             self.libs = dict()
 
-            if not self.is_shared_object:
-
+            if self._deps:
                 self._populate_libraries_ldd()
-                #print self.libs.keys()
                 for lib in self._libs:
-                    if "/usr/lib/" in lib:
-                        #print lib
+                    if "/" in lib:
                         lib = os.path.realpath(lib)
-                        self.libs[lib] = BinaryFile(lib)
+                        self.libs[lib] = BinaryFile(lib, deps=False)
 
         except:
             logger.error("BFD could not open the file.", exc_info=True)
