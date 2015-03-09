@@ -4,7 +4,7 @@ import logging
 import os
 import platform
 import sys
-#import time
+import time
 
 from collections import defaultdict
 
@@ -18,7 +18,7 @@ from barf.core.dbg.testcase import prepare_inputs
 from barf.core.reil import ReilMnemonic
 from barf.core.reil import ReilRegisterOperand
 
-from barf.core.dbg.event import Call
+from barf.core.dbg.event import CallIntel32
 
 logger = logging.getLogger(__name__)
 
@@ -154,7 +154,7 @@ def analyze_tainted_branch_data(c_analyzer, branches_taint_data, iteration):
     return new_inputs
 
 def taint_read(process, event, ir_emulator, initial_taints, open_files, file_mem_mapper, addrs_to_file):
-    if isinstance(event, Call):
+    if isinstance(event, CallIntel32):
         if event.name == "open":
             pathname_ptr, _ = event.get_typed_parameters()[0]
             file_desc = event.return_value
@@ -199,6 +199,8 @@ def taint_read(process, event, ir_emulator, initial_taints, open_files, file_mem
 
             open_files[file_desc]['f_pos'] = bytes_read
             file_mem_mapper[file_desc] = fmapper
+
+
 
 def process_binary(barf, input_file, ea_start, ea_end):
     """Executes the input binary and tracks Information about the
@@ -373,7 +375,7 @@ def main(args):
 
         iteration += 1
 
-        #time.sleep(10)
+        time.sleep(10)
 
 
 if __name__ == "__main__":
