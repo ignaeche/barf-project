@@ -1,5 +1,5 @@
 
-from ptrace.cpu_info import (CPU_POWERPC, CPU_INTEL, CPU_X86_64, CPU_I386, CPU_ARM)
+from ptrace.cpu_info import (CPU_POWERPC, CPU_INTEL, CPU_X86_64, CPU_I386)
 from ptrace.ctypes_tools import bytes2word
 from ptrace.debugger import ProcessExit, ProcessSignal, ProcessEvent
 
