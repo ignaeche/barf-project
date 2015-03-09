@@ -15,6 +15,8 @@ from barf.arch import ARCH_X86_MODE_64
 from barf.arch.x86.x86base import X86ArchitectureInformation
 from barf.core.dbg.debugger import ProcessControl, ProcessExit, ProcessEnd
 from barf.core.dbg.testcase import prepare_inputs
+from barf.core.reil import ReilEmptyOperand
+from barf.core.reil import ReilImmediateOperand
 from barf.core.reil import ReilMnemonic
 from barf.core.reil import ReilRegisterOperand
 
@@ -200,7 +202,35 @@ def taint_read(process, event, ir_emulator, initial_taints, open_files, file_mem
             open_files[file_desc]['f_pos'] = bytes_read
             file_mem_mapper[file_desc] = fmapper
 
+def concretize_instruction(instruction, emulator):
+    if instruction.mnemonic not in [ReilMnemonic.LDM]:
 
+        curr_oprnd0 = instruction.operands[0]
+        curr_oprnd1 = instruction.operands[1]
+
+        if isinstance(curr_oprnd0, ReilRegisterOperand) and \
+            not isinstance(curr_oprnd1, ReilEmptyOperand) and \
+            emulator.get_operand_taint(curr_oprnd0) == False:
+
+            # print "curr_oprnd0", curr_oprnd0, emulator.get_operand_taint(curr_oprnd0)
+
+            value = emulator.read_operand(curr_oprnd0)
+            new_oprnd0 = ReilImmediateOperand(value, curr_oprnd0.size)
+
+            instruction.operands[0] = new_oprnd0
+
+        elif isinstance(curr_oprnd1, ReilRegisterOperand) and \
+            not isinstance(curr_oprnd1, ReilEmptyOperand) and \
+            emulator.get_operand_taint(curr_oprnd1) == False:
+
+            # print "curr_oprnd1", curr_oprnd1, emulator.get_operand_taint(curr_oprnd1)
+
+            value = emulator.read_operand(curr_oprnd1)
+            new_oprnd1 = ReilImmediateOperand(value, curr_oprnd1.size)
+
+            instruction.operands[1] = new_oprnd1
+
+    return instruction
 
 def process_binary(barf, input_file, ea_start, ea_end):
     """Executes the input binary and tracks Information about the
@@ -215,6 +245,10 @@ def process_binary(barf, input_file, ea_start, ea_end):
     pcontrol = ProcessControl()
 
     process = pcontrol.start_process(binary, args, ea_start, ea_end, hooked_functions=["open", "read"])
+
+    barf.ir_translator.reset()
+    barf.smt_translator.reset()
+    barf.code_analyzer.reset(full=True)
 
     ir_emulator = barf.ir_emulator
     c_analyzer = barf.code_analyzer
@@ -278,7 +312,9 @@ def process_binary(barf, input_file, ea_start, ea_end):
             #print reil_instr.operands
 
             if len(get_tainted_operands(reil_instr, ir_emulator)) > 0:
-                tainted_instrs.append(reil_instr)
+                concrete_instr = concretize_instruction(reil_instr, ir_emulator)
+
+                tainted_instrs.append(concrete_instr)
 
             #print tainted_instrs
 
