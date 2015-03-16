@@ -106,6 +106,11 @@ def analyze_tainted_branch_data(c_analyzer, branches_taint_data, iteration):
         for instr in instrs_list:
             print instr
 
+        if c_analyzer.check() != 'sat':
+            print("UnSat Constraints!!!")
+            print(footer)
+            continue
+
         print(title.format(title="Branch Information"))
         print("Branch number : %d" % idx)
         print("Branch address : 0x%08x" % branch_addr)
@@ -118,11 +123,12 @@ def analyze_tainted_branch_data(c_analyzer, branches_taint_data, iteration):
 
             print(msg.format(tainted_addr, value, chr(value)))
 
-        print(footer)
-
+        print(title.format(title="New Input Files"))
         # Generate new input file.
         for fd in open_files:
             filename = open_files[fd]['filename']
+
+            print "File name: ", filename
 
             with open(filename, "rb") as f:
                 byte = f.read(1)
@@ -141,7 +147,7 @@ def analyze_tainted_branch_data(c_analyzer, branches_taint_data, iteration):
                         for p in pos_list:
                             file_content[p] = value
 
-            print "file content: ", file_content
+            print "File content: ", file_content
 
             name, extension = filename.split(".")
             name = name.split("_", 1)[0]
@@ -152,6 +158,8 @@ def analyze_tainted_branch_data(c_analyzer, branches_taint_data, iteration):
                 f.write(file_content)
 
             new_inputs.append(new_filename)
+
+        print(footer)
 
     return new_inputs
 
@@ -198,6 +206,11 @@ def taint_read(process, event, ir_emulator, initial_taints, open_files, file_mem
 
                 d_entry[file_desc] = l_entry
                 addrs_to_file[buf + i] = d_entry
+
+                data = ord(process.readBytes(buf + i, 1))
+                print "read @ %s : %x (%s)" % (hex(buf + i), data, chr(data))
+
+                ir_emulator.write_memory(buf + i, 8, data)
 
             open_files[file_desc]['f_pos'] = bytes_read
             file_mem_mapper[file_desc] = fmapper
@@ -246,6 +259,12 @@ def process_binary(barf, input_file, ea_start, ea_end):
 
     process = pcontrol.start_process(binary, args, ea_start, ea_end, hooked_functions=["open", "read"])
 
+    print "File: ", input_file[0]
+    with open(input_file[0], "r") as f:
+        for l in f.readlines():
+            print l
+    print "End of File."
+
     barf.ir_translator.reset()
     barf.smt_translator.reset()
     barf.code_analyzer.reset(full=True)
@@ -282,6 +301,9 @@ def process_binary(barf, input_file, ea_start, ea_end):
 
     taint_read(process, event, ir_emulator, initial_taints, open_files, file_mem_mapper, addrs_to_file)
 
+    ir_emulator._process = process
+    ir_emulator._flags = barf.arch_info.registers_flags
+
     while pcontrol:
         # Get some bytes from current IP.
         addr = process.getInstrPointer()
@@ -312,9 +334,10 @@ def process_binary(barf, input_file, ea_start, ea_end):
             #print reil_instr.operands
 
             if len(get_tainted_operands(reil_instr, ir_emulator)) > 0:
-                concrete_instr = concretize_instruction(reil_instr, ir_emulator)
+                if reil_instr.mnemonic not in [ReilMnemonic.LDM]:
+                    concrete_instr = concretize_instruction(reil_instr, ir_emulator)
 
-                tainted_instrs.append(concrete_instr)
+                    tainted_instrs.append(concrete_instr)
 
             #print tainted_instrs
 
@@ -322,11 +345,19 @@ def process_binary(barf, input_file, ea_start, ea_end):
             if reil_instr.mnemonic == ReilMnemonic.LDM and \
                 isinstance(reil_instr.operands[0], ReilRegisterOperand):
 
-                addr = ir_emulator.read_operand(reil_instr.operands[0])
+                oprnd = reil_instr.operands[0]
+
+                addr = ir_emulator.read_operand(oprnd)
                 size = reil_instr.operands[2].size
 
                 if ir_emulator.get_memory_taint(addr, size):
-                    addrs_to_vars[addr].append((reil_instr.operands[0], size))
+                    oprnd_new = ReilRegisterOperand(oprnd.name + "_" + str(addr), oprnd.size)
+
+                    reil_instr.operands[0] = oprnd_new
+
+                    tainted_instrs.append(reil_instr)
+
+                    addrs_to_vars[addr].append((oprnd_new, size))
 
             # If there is a conditional jump depending on tainted data
             # generate condition.
@@ -406,6 +437,8 @@ def main(args):
         branches_taint_data = process_binary(barf, [input_file], ea_start, ea_end)
 
         new_inputs = analyze_tainted_branch_data(barf.code_analyzer, branches_taint_data, iteration)
+
+        print "New input files: ", map(str, new_inputs)
 
         input_files.extend(new_inputs)
 
