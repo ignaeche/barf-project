@@ -46,6 +46,7 @@ from arch.x86.x86disassembler import X86Disassembler
 from arch.x86.x86translator import X86Translator
 from core.bi import BinaryFile
 from core.reil import ReilEmulator
+from core.smt.smtlibv2 import Z3Solver
 from core.smt.smtlibv2 import CVC4Solver
 from core.smt.smtlibv2 import Z3Solver
 from core.dbg.debugger import ProcessControl, ProcessExit, ProcessSignal, ProcessEnd
