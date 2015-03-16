@@ -286,7 +286,7 @@ def process_binary(barf, input_file, ea_start, ea_end):
         exit(-1)
 
     registers = barf.arch_info.registers_gp_base
-    mapper = host_arch_info.registers_access_mapper()
+    mapper = host_arch_info.alias_mapper
 
     branches_taint_data = []
     tainted_instrs = []
