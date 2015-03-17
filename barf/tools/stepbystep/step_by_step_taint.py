@@ -20,7 +20,7 @@ from barf.core.reil import ReilImmediateOperand
 from barf.core.reil import ReilMnemonic
 from barf.core.reil import ReilRegisterOperand
 
-from barf.core.dbg.event import CallIntel32
+from hooks import taint_read
 
 logger = logging.getLogger(__name__)
 
@@ -163,58 +163,6 @@ def analyze_tainted_branch_data(c_analyzer, branches_taint_data, iteration):
 
     return new_inputs
 
-def taint_read(process, event, ir_emulator, initial_taints, open_files, file_mem_mapper, addrs_to_file):
-    if isinstance(event, CallIntel32):
-        if event.name == "open":
-            pathname_ptr, _ = event.get_typed_parameters()[0]
-            file_desc = event.return_value
-
-            # TODO: Get filename.
-            i = 0
-            maxcnt = 1024
-            filename = ""
-            byte = process.readBytes(pathname_ptr+i, 1)
-            while byte != "\x00" and len(filename) < maxcnt:
-                filename += byte
-                i += 1
-                byte = process.readBytes(pathname_ptr+i, 1)
-
-            open_files[file_desc] = {
-                'filename' : filename,
-                'f_pos' : 0
-            }
-
-        if event.name == "read":
-            file_desc, _ = event.get_typed_parameters()[0]
-            buf, _ = event.get_typed_parameters()[1]
-            bytes_read = event.return_value
-
-            file_curr_pos = open_files[file_desc]['f_pos']
-            fmapper = file_mem_mapper.get(file_desc, {})
-
-            # Taint memory address.
-            ir_emulator.set_memory_taint(buf, bytes_read * 8, True)
-
-            # Keep record of inital taints.
-            for i in xrange(0, bytes_read):
-                fmapper[buf + i] = file_curr_pos + i
-                initial_taints.append(buf + i)
-
-                d_entry = addrs_to_file.get(buf + i, {})
-                l_entry = d_entry.get(file_desc, [])
-                l_entry.append(file_curr_pos + i)
-
-                d_entry[file_desc] = l_entry
-                addrs_to_file[buf + i] = d_entry
-
-                data = ord(process.readBytes(buf + i, 1))
-                print "read @ %s : %x (%s)" % (hex(buf + i), data, chr(data))
-
-                ir_emulator.write_memory(buf + i, 8, data)
-
-            open_files[file_desc]['f_pos'] = bytes_read
-            file_mem_mapper[file_desc] = fmapper
-
 def concretize_instruction(instruction, emulator):
     if instruction.mnemonic not in [ReilMnemonic.LDM]:
 
@@ -257,7 +205,7 @@ def process_binary(barf, input_file, ea_start, ea_end):
     args = input_file
     pcontrol = ProcessControl()
 
-    process = pcontrol.start_process(binary, args, ea_start, ea_end, hooked_functions=["open", "read"])
+    process = pcontrol.start_process(binary, args, ea_start, ea_end, hooked_functions=["open", "fopen", "read", "fread"])
 
     print "File: ", input_file[0]
     with open(input_file[0], "r") as f:
