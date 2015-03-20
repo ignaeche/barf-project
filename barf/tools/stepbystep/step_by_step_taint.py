@@ -15,12 +15,14 @@ from barf.arch import ARCH_X86_MODE_64
 from barf.arch.x86.x86base import X86ArchitectureInformation
 from barf.core.dbg.debugger import ProcessControl, ProcessExit, ProcessEnd
 from barf.core.dbg.testcase import prepare_inputs
+from barf.core.dbg.input import File
 from barf.core.reil import ReilEmptyOperand
 from barf.core.reil import ReilImmediateOperand
 from barf.core.reil import ReilMnemonic
 from barf.core.reil import ReilRegisterOperand
 
 from hooks import taint_read
+from exploration import new_to_explore, next_to_explore, add_to_explore, was_explored
 
 logger = logging.getLogger(__name__)
 
@@ -157,7 +159,8 @@ def analyze_tainted_branch_data(c_analyzer, branches_taint_data, iteration):
             with open(new_filename, "wb") as f:
                 f.write(file_content)
 
-            new_inputs.append(new_filename)
+            #new_inputs.append(new_filename)
+            new_inputs.append((filename, file_content))
 
         print(footer)
 
@@ -193,7 +196,7 @@ def concretize_instruction(instruction, emulator):
 
     return instruction
 
-def process_binary(barf, input_file, ea_start, ea_end):
+def process_binary(barf, args, ea_start, ea_end):
     """Executes the input binary and tracks Information about the
     branches that depends on input data.
 
@@ -202,16 +205,16 @@ def process_binary(barf, input_file, ea_start, ea_end):
 
     binary = barf.binary
     # args = prepare_inputs(barf.testcase["args"] + barf.testcase["files"])
-    args = input_file
+    #args = input_file
     pcontrol = ProcessControl()
 
     process = pcontrol.start_process(binary, args, ea_start, ea_end, hooked_functions=["open", "fopen", "read", "fread"])
 
-    print "File: ", input_file[0]
-    with open(input_file[0], "r") as f:
-        for l in f.readlines():
-            print l
-    print "End of File."
+    #print "File: ", input_file[0]
+    #with open(input_file[0], "r") as f:
+    #    for l in f.readlines():
+    #        print l
+    #print "End of File."
 
     barf.ir_translator.reset()
     barf.smt_translator.reset()
@@ -238,6 +241,7 @@ def process_binary(barf, input_file, ea_start, ea_end):
 
     branches_taint_data = []
     tainted_instrs = []
+    concrete_tainted_instrs = []
     initial_taints = []
     addrs_to_vars = defaultdict(lambda: [])
     open_files = {}
@@ -259,7 +263,7 @@ def process_binary(barf, input_file, ea_start, ea_end):
         # Disassemble current native instruction.
         asm_instr = barf.disassembler.disassemble(process.readBytes(addr, 15), addr)
 
-        print("0x{0:08x} : {1}".format(addr, asm_instr))
+        #print("0x{0:08x} : {1}".format(addr, asm_instr))
 
         # Translate native instruction to REIL.
         reil_instrs = barf.ir_translator.translate(asm_instr)
@@ -322,6 +326,7 @@ def process_binary(barf, input_file, ea_start, ea_end):
                     branches_taint_data.append({
                         'branch_address' : addr,
                         'tainted_instructions' : list(tainted_instrs),
+                        'concrete_tainted_instructions' : list(concrete_tainted_instrs),
                         'branch_condition_register' : cond,
                         'branch_condition_value' : cond_value,
                         'initial_taints' : list(initial_taints),
@@ -369,28 +374,25 @@ def main(args):
 
         sys.exit(-1)
 
-    input_files = []
+    #input_files = []
 
-    input_file = prepare_inputs(barf.testcase["args"] + barf.testcase["files"])
+    inputs = prepare_inputs(barf.testcase["args"] + barf.testcase["files"])
+    branches_taint_data = process_binary(barf, inputs, ea_start, ea_end)
+    new_raw_files = analyze_tainted_branch_data(barf.code_analyzer, branches_taint_data, 0)
+    new_files = map(lambda args: File(*args), new_raw_files)
 
-    input_files.append(barf.testcase["files"][0].GetFilename())
+    map(add_to_explore, zip(branches_taint_data, new_files))
 
-    iteration = 0
+    while new_to_explore():
 
-    while input_files and iteration < 10:
-        input_file = input_files.pop()
+        branch, input_file = next_to_explore()
+        inputs = prepare_inputs(barf.testcase["args"] + [input_file])
+        branches_taint_data = process_binary(barf, inputs, ea_start, ea_end)
+        new_raw_files = analyze_tainted_branch_data(barf.code_analyzer, branches_taint_data, 0)
 
-        print "Processing #%d: %s" % (iteration, input_file)
-
-        branches_taint_data = process_binary(barf, [input_file], ea_start, ea_end)
-
-        new_inputs = analyze_tainted_branch_data(barf.code_analyzer, branches_taint_data, iteration)
-
-        print "New input files: ", map(str, new_inputs)
-
-        input_files.extend(new_inputs)
-
-        iteration += 1
+        for (branch, raw_file) in zip(branches_taint_data, new_raw_files):
+          if not was_explored(branch):
+              add_to_explore( (branch, File(*raw_file)) )
 
         time.sleep(10)
 
@@ -401,5 +403,10 @@ if __name__ == "__main__":
     # 2. For now, it only taints data from the 'read' function.
     # 3. For now, you have to HARDCODE the 'read' function address for
     # each binary.
+
+    if open("/proc/sys/kernel/randomize_va_space").read().strip() <> "0":
+        print "Address space layout randomization (ASLR) is enabled, disable it before continue"
+        print "Hint: # echo 0 > /proc/sys/kernel/randomize_va_space"
+        sys.exit(-1)
 
     main(dict(enumerate(sys.argv)))
