@@ -46,6 +46,38 @@ def get_tainted_operands(instr, emulator):
 
     return tainted_oprnds
 
+def generate_input_files(c_analyzer, mem_exprs, open_files, addrs_to_files, iteration, branch_index):
+    new_inputs = []
+
+    for fd in open_files:
+        # Read 'master' file.
+        filename = open_files[fd]['filename']
+
+        with open(filename, "rb") as f:
+            file_content = bytearray(f.read())
+
+        # Mutate file content.
+        for tainted_addr, mem_expr in sorted(mem_exprs.items()):
+            for pos in addrs_to_files[tainted_addr].get(fd, []):
+                file_content[pos] = c_analyzer.get_expr_value(mem_expr)
+
+        # Write new file.
+        full_name, extension = filename.split(".")
+        base_name = full_name.split("_", 1)[0]
+
+        new_filename = base_name + "_%03d_%03d" % (iteration, branch_index) + "." + extension
+
+        with open(new_filename, "wb") as f:
+            f.write(file_content)
+
+        # Print new file name and content.
+        print("Name: " + new_filename)
+        print("Content: " + file_content)
+
+        new_inputs.append((filename, file_content))
+
+    return new_inputs
+
 def analyze_tainted_branch_data(c_analyzer, branches_taint_data, iteration):
     """For each input branch (which depends on tainted input), it
     prints the values needed to avoid taking that branch.
@@ -63,13 +95,17 @@ def analyze_tainted_branch_data(c_analyzer, branches_taint_data, iteration):
         # TODO: Simplify tainted instructions, i.e, remove superfluous
         # instructions.
         branch_addr = branch_taint_data['branch_address']
-        instrs_list = branch_taint_data['tainted_instructions']
         branch_cond = branch_taint_data['branch_condition_register']
         branch_val = branch_taint_data['branch_condition_value']
-        initial_taints = branch_taint_data['initial_taints']
-        addrs_to_vars = branch_taint_data['addrs_to_vars']
+
+        instrs_list = branch_taint_data['tainted_instructions']
+
         open_files = branch_taint_data['open_files']
-        addrs_to_file = branch_taint_data['addrs_to_file']
+
+        initial_taints = branch_taint_data['initial_taints']
+
+        addrs_to_vars = branch_taint_data['addrs_to_vars']
+        addrs_to_files = branch_taint_data['addrs_to_files']
 
         # Add initial tainted addresses to the code analyzer.
         mem_exprs = {}
@@ -103,6 +139,13 @@ def analyze_tainted_branch_data(c_analyzer, branches_taint_data, iteration):
         title = "{ruler}\n# {{title}}\n{ruler}".format(ruler=ruler)
         footer = "{0}\n{0}".format("~" * 80)
 
+        # Branch Information
+        print(title.format(title="Branch Information"))
+        print("Branch number : %d" % idx)
+        print("Branch address : 0x%08x" % branch_addr)
+        print("Branch taken? : %s" % (branch_val == 0x1))
+
+        # Tainted Instructions
         print(title.format(title="Tainted Instructions"))
         for instr in instrs_list:
             print instr
@@ -113,11 +156,7 @@ def analyze_tainted_branch_data(c_analyzer, branches_taint_data, iteration):
             print(footer)
             continue
 
-        print(title.format(title="Branch Information"))
-        print("Branch number : %d" % idx)
-        print("Branch address : 0x%08x" % branch_addr)
-        print("Branch taken? : %s" % (branch_val == 0x1))
-
+        # Memory State
         msg = "mem @ 0x{:08x} : {:02x} ({:s})"
         print(title.format(title="Memory State"))
         for tainted_addr, mem_expr in sorted(mem_exprs.items()):
@@ -125,42 +164,9 @@ def analyze_tainted_branch_data(c_analyzer, branches_taint_data, iteration):
 
             print(msg.format(tainted_addr, value, chr(value)))
 
+        # New Input Files
         print(title.format(title="New Input Files"))
-        # Generate new input file.
-        for fd in open_files:
-            filename = open_files[fd]['filename']
-
-            print "File name: ", filename
-
-            with open(filename, "rb") as f:
-                byte = f.read(1)
-                file_content = bytearray()
-
-                while byte:
-                    file_content.append(byte)
-                    # Do stuff with byte.
-                    byte = f.read(1)
-
-            for tainted_addr, mem_expr in sorted(mem_exprs.items()):
-                value = c_analyzer.get_expr_value(mem_expr)
-
-                for fd2, pos_list in addrs_to_file[tainted_addr].items():
-                    if fd2 == fd:
-                        for p in pos_list:
-                            file_content[p] = value
-
-            print "File content: ", file_content
-
-            name, extension = filename.split(".")
-            name = name.split("_", 1)[0]
-
-            new_filename = name + "_%03d_%03d" % (iteration, idx) + "." + extension
-
-            with open(new_filename, "wb") as f:
-                f.write(file_content)
-
-            #new_inputs.append(new_filename)
-            new_inputs.append((filename, file_content))
+        new_inputs += generate_input_files(c_analyzer, mem_exprs, open_files, addrs_to_files, iteration, idx)
 
         print(footer)
 
@@ -229,17 +235,15 @@ def process_binary(barf, args, ea_start, ea_end):
 
     branches_taint_data = []
     tainted_instrs = []
-    concrete_tainted_instrs = []
+    open_files = {}
     initial_taints = []
     addrs_to_vars = defaultdict(lambda: [])
-    open_files = {}
-    file_mem_mapper = {}
-    addrs_to_file = {}
+    addrs_to_files = {}
 
     # Continue until the first hooked function.
     event = pcontrol.cont()
 
-    process_event(process, event, ir_emulator, initial_taints, open_files, file_mem_mapper, addrs_to_file)
+    process_event(process, event, ir_emulator, initial_taints, open_files, addrs_to_files)
 
     ir_emulator._process = process
     ir_emulator._flags = barf.arch_info.registers_flags
@@ -300,15 +304,13 @@ def process_binary(barf, args, ea_start, ea_end):
 
                         branches_taint_data.append({
                             'branch_address' : addr,
-                            'tainted_instructions' : list(tainted_instrs),
-                            'concrete_tainted_instructions' : list(concrete_tainted_instrs),
                             'branch_condition_register' : cond,
                             'branch_condition_value' : cond_value,
+                            'tainted_instructions' : list(tainted_instrs),
+                            'open_files' : dict(open_files),
                             'initial_taints' : list(initial_taints),
                             'addrs_to_vars' : dict(addrs_to_vars),
-                            'open_files' : dict(open_files),
-                            'file_mem_mapper' : dict(file_mem_mapper),
-                            'addrs_to_file' : dict(addrs_to_file),
+                            'addrs_to_files' : dict(addrs_to_files),
                         })
             else:
                 if len(get_tainted_operands(reil_instr, ir_emulator)) > 0:
@@ -318,7 +320,7 @@ def process_binary(barf, args, ea_start, ea_end):
 
         event = pcontrol.single_step()
 
-        process_event(process, event, ir_emulator, initial_taints, open_files, file_mem_mapper, addrs_to_file)
+        process_event(process, event, ir_emulator, initial_taints, open_files, addrs_to_files)
 
         if isinstance(event, ProcessExit):
             print("[+] Process exit.")
@@ -363,7 +365,7 @@ def main(args):
     #map(add_to_explore, zip(branches_taint_data, new_files))
     for (branch, raw_file) in zip(branches_taint_data, new_raw_files):
         if not was_explored(branch) and raw_file is not None:
-            add_to_explore( (branch, File(*raw_file)) )
+            add_to_explore((branch, File(*raw_file)))
 
 
     while new_to_explore():
