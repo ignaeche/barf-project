@@ -110,6 +110,7 @@ def analyze_tainted_branch_data(c_analyzer, branches_taint_data, iteration):
 
         if c_analyzer.check() != 'sat':
             print("UnSat Constraints!!!")
+            new_inputs.append(None)
             print(footer)
             continue
 
@@ -379,9 +380,13 @@ def main(args):
     inputs = prepare_inputs(barf.testcase["args"] + barf.testcase["files"])
     branches_taint_data = process_binary(barf, inputs, ea_start, ea_end)
     new_raw_files = analyze_tainted_branch_data(barf.code_analyzer, branches_taint_data, 0)
-    new_files = map(lambda args: File(*args), new_raw_files)
+    #new_files = map(lambda args: File(*args), new_raw_files)
 
-    map(add_to_explore, zip(branches_taint_data, new_files))
+    #map(add_to_explore, zip(branches_taint_data, new_files))
+    for (branch, raw_file) in zip(branches_taint_data, new_raw_files):
+        if not was_explored(branch) and raw_file is not None:
+            add_to_explore( (branch, File(*raw_file)) )
+
 
     while new_to_explore():
 
@@ -391,7 +396,7 @@ def main(args):
         new_raw_files = analyze_tainted_branch_data(barf.code_analyzer, branches_taint_data, 0)
 
         for (branch, raw_file) in zip(branches_taint_data, new_raw_files):
-          if not was_explored(branch):
+          if not was_explored(branch) and raw_file is not None:
               add_to_explore( (branch, File(*raw_file)) )
 
         time.sleep(10)
