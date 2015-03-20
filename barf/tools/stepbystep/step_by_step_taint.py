@@ -21,10 +21,11 @@ from barf.core.reil import ReilImmediateOperand
 from barf.core.reil import ReilMnemonic
 from barf.core.reil import ReilRegisterOperand
 
-from hooks import taint_read
+from hooks import process_event
 from exploration import new_to_explore, next_to_explore, add_to_explore, was_explored
 
 logger = logging.getLogger(__name__)
+
 
 def get_tainted_operands(instr, emulator):
     """Returns an instruction's tainted operands.
@@ -61,8 +62,6 @@ def analyze_tainted_branch_data(c_analyzer, branches_taint_data, iteration):
 
         # TODO: Simplify tainted instructions, i.e, remove superfluous
         # instructions.
-        # TODO: 'Concretize' not tainted instructions' operands.
-
         branch_addr = branch_taint_data['branch_address']
         instrs_list = branch_taint_data['tainted_instructions']
         branch_cond = branch_taint_data['branch_condition_register']
@@ -177,8 +176,6 @@ def concretize_instruction(instruction, emulator):
             not isinstance(curr_oprnd1, ReilEmptyOperand) and \
             emulator.get_operand_taint(curr_oprnd0) == False:
 
-            # print "curr_oprnd0", curr_oprnd0, emulator.get_operand_taint(curr_oprnd0)
-
             value = emulator.read_operand(curr_oprnd0)
             new_oprnd0 = ReilImmediateOperand(value, curr_oprnd0.size)
 
@@ -187,8 +184,6 @@ def concretize_instruction(instruction, emulator):
         elif isinstance(curr_oprnd1, ReilRegisterOperand) and \
             not isinstance(curr_oprnd1, ReilEmptyOperand) and \
             emulator.get_operand_taint(curr_oprnd1) == False:
-
-            # print "curr_oprnd1", curr_oprnd1, emulator.get_operand_taint(curr_oprnd1)
 
             value = emulator.read_operand(curr_oprnd1)
             new_oprnd1 = ReilImmediateOperand(value, curr_oprnd1.size)
@@ -205,17 +200,9 @@ def process_binary(barf, args, ea_start, ea_end):
     print("[+] Executing x86 to REIL...")
 
     binary = barf.binary
-    # args = prepare_inputs(barf.testcase["args"] + barf.testcase["files"])
-    #args = input_file
     pcontrol = ProcessControl()
 
     process = pcontrol.start_process(binary, args, ea_start, ea_end, hooked_functions=["open", "fopen", "read", "fread"])
-
-    #print "File: ", input_file[0]
-    #with open(input_file[0], "r") as f:
-    #    for l in f.readlines():
-    #        print l
-    #print "End of File."
 
     barf.ir_translator.reset()
     barf.smt_translator.reset()
@@ -252,7 +239,7 @@ def process_binary(barf, args, ea_start, ea_end):
     # Continue until the first hooked function.
     event = pcontrol.cont()
 
-    taint_read(process, event, ir_emulator, initial_taints, open_files, file_mem_mapper, addrs_to_file)
+    process_event(process, event, ir_emulator, initial_taints, open_files, file_mem_mapper, addrs_to_file)
 
     ir_emulator._process = process
     ir_emulator._flags = barf.arch_info.registers_flags
@@ -283,64 +270,55 @@ def process_binary(barf, args, ea_start, ea_end):
             # Execute REIL instruction
             ir_emulator.execute_lite([reil_instr])
 
-            # Add instructions with tainted operands to a list.
-            #print reil_instr.operands
+            # Process REIL instruction
+            if reil_instr.mnemonic == ReilMnemonic.LDM:
+                if isinstance(reil_instr.operands[0], ReilRegisterOperand):
+                    oprnd = reil_instr.operands[0]
 
-            if len(get_tainted_operands(reil_instr, ir_emulator)) > 0:
-                if reil_instr.mnemonic not in [ReilMnemonic.LDM]:
+                    addr = ir_emulator.read_operand(oprnd)
+                    size = reil_instr.operands[2].size
+
+                    if ir_emulator.get_memory_taint(addr, size):
+                        oprnd_new = ReilRegisterOperand(oprnd.name + "_" + str(addr), oprnd.size)
+
+                        reil_instr.operands[0] = oprnd_new
+
+                        tainted_instrs.append(reil_instr)
+
+                        addrs_to_vars[addr].append((oprnd_new, size))
+            elif reil_instr.mnemonic == ReilMnemonic.JCC:
+                if isinstance(reil_instr.operands[0], ReilRegisterOperand):
+
+                    cond = reil_instr.operands[0]
+
+                    if ir_emulator.get_operand_taint(cond):
+                        print("[+] Tainted JCC")
+
+                        cond_value = ir_emulator.read_operand(cond)
+
+                        tainted_instrs.append(reil_instr)
+
+                        branches_taint_data.append({
+                            'branch_address' : addr,
+                            'tainted_instructions' : list(tainted_instrs),
+                            'concrete_tainted_instructions' : list(concrete_tainted_instrs),
+                            'branch_condition_register' : cond,
+                            'branch_condition_value' : cond_value,
+                            'initial_taints' : list(initial_taints),
+                            'addrs_to_vars' : dict(addrs_to_vars),
+                            'open_files' : dict(open_files),
+                            'file_mem_mapper' : dict(file_mem_mapper),
+                            'addrs_to_file' : dict(addrs_to_file),
+                        })
+            else:
+                if len(get_tainted_operands(reil_instr, ir_emulator)) > 0:
                     concrete_instr = concretize_instruction(reil_instr, ir_emulator)
 
                     tainted_instrs.append(concrete_instr)
 
-            #print tainted_instrs
-
-            # Pair registers names with tainted memory addresses.
-            if reil_instr.mnemonic == ReilMnemonic.LDM and \
-                isinstance(reil_instr.operands[0], ReilRegisterOperand):
-
-                oprnd = reil_instr.operands[0]
-
-                addr = ir_emulator.read_operand(oprnd)
-                size = reil_instr.operands[2].size
-
-                if ir_emulator.get_memory_taint(addr, size):
-                    oprnd_new = ReilRegisterOperand(oprnd.name + "_" + str(addr), oprnd.size)
-
-                    reil_instr.operands[0] = oprnd_new
-
-                    tainted_instrs.append(reil_instr)
-
-                    addrs_to_vars[addr].append((oprnd_new, size))
-
-            # If there is a conditional jump depending on tainted data
-            # generate condition.
-            if reil_instr.mnemonic == ReilMnemonic.JCC and \
-                isinstance(reil_instr.operands[0], ReilRegisterOperand):
-
-                cond = reil_instr.operands[0]
-
-                if ir_emulator.get_operand_taint(cond):
-                    print("[+] Tainted JCC")
-
-                    cond_value = ir_emulator.read_operand(cond)
-
-                    branches_taint_data.append({
-                        'branch_address' : addr,
-                        'tainted_instructions' : list(tainted_instrs),
-                        'concrete_tainted_instructions' : list(concrete_tainted_instrs),
-                        'branch_condition_register' : cond,
-                        'branch_condition_value' : cond_value,
-                        'initial_taints' : list(initial_taints),
-                        'addrs_to_vars' : dict(addrs_to_vars),
-                        'open_files' : dict(open_files),
-                        'file_mem_mapper' : dict(file_mem_mapper),
-                        'addrs_to_file' : dict(addrs_to_file),
-                    })
-
         event = pcontrol.single_step()
 
-        taint_read(process, event, ir_emulator, initial_taints, open_files, file_mem_mapper, addrs_to_file)
-
+        process_event(process, event, ir_emulator, initial_taints, open_files, file_mem_mapper, addrs_to_file)
 
         if isinstance(event, ProcessExit):
             print("[+] Process exit.")
@@ -406,8 +384,6 @@ if __name__ == "__main__":
     # NOTES:
     # 1. For now, it works only for programs compiled in 32 bits.
     # 2. For now, it only taints data from the 'read' function.
-    # 3. For now, you have to HARDCODE the 'read' function address for
-    # each binary.
 
     if open("/proc/sys/kernel/randomize_va_space").read().strip() <> "0":
         print "Address space layout randomization (ASLR) is enabled, disable it before continue"
