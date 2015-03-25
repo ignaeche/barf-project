@@ -71,7 +71,7 @@ class Arg(Input):
 class File(Input):
   def __init__(self, filename, data):
     self.filename = str(filename)
-    self.data = str(data)
+    self.data = bytearray(data)
     self.size = len(data)
 
   def __str__(self):
