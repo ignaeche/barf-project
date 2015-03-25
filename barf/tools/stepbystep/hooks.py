@@ -41,6 +41,8 @@ def read_handler(event, process, ir_emulator, initial_taints, open_files, addrs_
         data = ord(process.readBytes(buf + i, 1))
         ir_emulator.write_memory(buf + i, 8, data)
 
+        # print("Read @ %x : %02x (%s)" % (buf + i, data, chr(data)))
+
     open_files[file_desc]['f_pos'] = bytes_read
 
 def process_event(process, event, ir_emulator, initial_taints, open_files, addrs_to_files):

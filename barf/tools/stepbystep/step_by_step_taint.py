@@ -119,12 +119,17 @@ def analyze_tainted_branch_data(c_analyzer, branches_taint_data, iteration):
                 mem_exprs[tainted_addr] = mem_expr
 
         # Add instructions to the code analyzer.
+        jcc_index = 0
         for instr in instrs_list[:-1]:
             if instr.mnemonic == ReilMnemonic.JCC and \
                 isinstance(instr.operands[0], ReilRegisterOperand):
                 op1_var = c_analyzer.get_operand_var(instr.operands[0])
 
-                c_analyzer.add_constraint(op1_var == 0x1)
+                jcc_cond_val = branches_taint_data[jcc_index]['branch_condition_value']
+
+                c_analyzer.add_constraint(op1_var == jcc_cond_val)
+
+                jcc_cond_val += 1
 
             c_analyzer.add_instruction(instr)
 
@@ -284,19 +289,18 @@ def process_binary(barf, args, ea_start, ea_end):
 
                     if ir_emulator.get_memory_taint(addr, size):
                         oprnd_new = ReilRegisterOperand(oprnd.name + "_" + str(addr), oprnd.size)
-
                         reil_instr.operands[0] = oprnd_new
 
-                        tainted_instrs.append(reil_instr)
-
                         addrs_to_vars[addr].append((oprnd_new, size))
+
+                        tainted_instrs.append(reil_instr)
             elif reil_instr.mnemonic == ReilMnemonic.JCC:
                 if isinstance(reil_instr.operands[0], ReilRegisterOperand):
 
                     cond = reil_instr.operands[0]
 
                     if ir_emulator.get_operand_taint(cond):
-                        print("[+] Tainted JCC")
+                        print("[+] Tainted JCC @ 0x%08x" % asm_instr.address)
 
                         cond_value = ir_emulator.read_operand(cond)
 
