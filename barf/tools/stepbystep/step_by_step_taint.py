@@ -179,7 +179,7 @@ def concretize_instruction(instruction, emulator):
         curr_oprnd1 = instruction.operands[1]
 
         if isinstance(curr_oprnd0, ReilRegisterOperand) and \
-            not isinstance(curr_oprnd1, ReilEmptyOperand) and \
+            not isinstance(curr_oprnd0, ReilEmptyOperand) and \
             emulator.get_operand_taint(curr_oprnd0) == False:
 
             value = emulator.read_operand(curr_oprnd0)
