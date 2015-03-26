@@ -1,1 +1,1 @@
- /usr/bin/cjpeg
+/usr/bin/cjpeg
