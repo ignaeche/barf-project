@@ -213,7 +213,7 @@ def process_binary(barf, args, ea_start, ea_end):
     binary = barf.binary
     pcontrol = ProcessControl()
 
-    process = pcontrol.start_process(binary, args, ea_start, ea_end, hooked_functions=["open", "fopen", "read", "fread", "fgetc"])
+    process = pcontrol.start_process(binary, args, ea_start, ea_end, hooked_functions=["open", "fopen", "read", "fread", "fgetc", "_IO_getc"])
 
     barf.ir_translator.reset()
     barf.smt_translator.reset()
