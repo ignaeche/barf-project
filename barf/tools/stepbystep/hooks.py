@@ -1,17 +1,16 @@
+from barf.core.reil import ReilRegisterOperand
 from barf.core.dbg.event import CallIntel32
 from ptrace.cpu_info import (CPU_POWERPC, CPU_INTEL, CPU_X86_64, CPU_I386)
-
-#from ctypes import c_char
 from ptrace.ctypes_tools import bytes2word
-#from stdio import _IO_FILE
 
+#FIXME: move this function to another file
 def pfileno_32(process, file_ptr):
     _fileno_offset_32 = 56
     _fileno_size_32 = 4
 
     bs = process.readBytes(file_ptr+_fileno_offset_32,  _fileno_size_32)
 
-    if CPU_X86_64: 
+    if CPU_X86_64:
         bs = bs + (4*'\00')
 
     return bytes2word(bs)
@@ -82,6 +81,7 @@ def read_handler(event, process, ir_emulator, initial_taints, open_files, addrs_
 # fread
 
 def fread_handler(event, process, ir_emulator, initial_taints, open_files, addrs_to_files):
+    raise NotImplementedError
     # TODO: cache?
     # Get parameters.
     file_ptr, _ = event.get_typed_parameters()[0]
@@ -116,8 +116,22 @@ def fread_handler(event, process, ir_emulator, initial_taints, open_files, addrs
     open_files[file_desc]['f_pos'] = bytes_read
 
 def fgetc_handler(event, process, ir_emulator, initial_taints, open_files, addrs_to_files):
-    raise NotImplemented
 
+    ret_operand = ReilRegisterOperand("eax", 32)
+    # Get parameters.
+    file_ptr, _ = event.get_typed_parameters()[0]
+    file_desc = pfileno_32(process, file_ptr)
+    #byte_read = event.return_value
+
+    # Taint return register.
+    ir_emulator.set_operand_taint(ret_operand, True)
+
+    # Keep record of inital taints.
+    file_curr_pos = open_files[file_desc]['f_pos']
+
+    #FIXME: missing code
+
+    open_files[file_desc]['f_pos'] = open_files[file_desc]['f_pos'] + 1
 
 def process_event(process, event, ir_emulator, initial_taints, open_files, addrs_to_files):
     if isinstance(event, CallIntel32):
@@ -125,8 +139,7 @@ def process_event(process, event, ir_emulator, initial_taints, open_files, addrs
             open_handler(event, process, open_files)
 
         if event.name == "fopen":
-            fopen_handler(event, process, open_files)          
-            #raise NotImplementedError
+            fopen_handler(event, process, open_files)
 
         if event.name == "read":
             read_handler(event, process, ir_emulator, initial_taints, open_files, addrs_to_files)
@@ -134,6 +147,6 @@ def process_event(process, event, ir_emulator, initial_taints, open_files, addrs
         if event.name == "fread":
             fread_handler(event, process, ir_emulator, initial_taints, open_files, addrs_to_files)
 
-        if event.name == "fgetc":
+        if event.name == "fgetc" or event.name == "_IO_getc":
             fgetc_handler(event, process, ir_emulator, initial_taints, open_files, addrs_to_files)
 
