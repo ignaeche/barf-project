@@ -3,6 +3,7 @@ from barf.core.dbg.event import CallIntel32
 from ptrace.cpu_info import (CPU_POWERPC, CPU_INTEL, CPU_X86_64, CPU_I386)
 from ptrace.ctypes_tools import bytes2word
 
+"""
 #FIXME: move this function to another file
 def pfileno_32(process, file_ptr):
     _fileno_offset_32 = 56
@@ -14,6 +15,8 @@ def pfileno_32(process, file_ptr):
         bs = bs + (4*'\00')
 
     return bytes2word(bs)
+"""
+
 
 def open_handler(event, process, open_files):
     # Get parameters.
@@ -27,8 +30,21 @@ def open_handler(event, process, open_files):
         'filename' : filename,
         'f_pos' : 0
     }
+    return False
+
+def close_handler(event, process, open_files):
+    # Get parameters.
+    file_ptr,_ = event.get_typed_parameters()[0]
+    file_desc = event.return_value
+
+    #print "closing:", file_desc
+    if file_desc in open_files:
+        del open_files[file_desc]
+
+    return False
 
 
+"""
 def fopen_handler(event, process, open_files):
 
     # Get parameters.
@@ -44,13 +60,17 @@ def fopen_handler(event, process, open_files):
         'filename' : filename,
         'f_pos' : 0
     }
-
+"""
 
 def read_handler(event, process, ir_emulator, initial_taints, open_files, addrs_to_files):
     # Get parameters.
     file_desc, _ = event.get_typed_parameters()[0]
     buf, _ = event.get_typed_parameters()[1]
     bytes_read = event.return_value
+
+    finfo = open_files.get(file_desc,None)
+    if finfo is None: #or not (finfo['filename'] == "input1"):
+        return False
 
     # Taint memory address.
     ir_emulator.set_memory_taint(buf, bytes_read * 8, True)
@@ -77,7 +97,9 @@ def read_handler(event, process, ir_emulator, initial_taints, open_files, addrs_
         # print("Read @ %x : %02x (%s)" % (buf + i, data, chr(data)))
 
     open_files[file_desc]['f_pos'] = bytes_read
+    return True
 
+"""
 # fread
 
 def fread_handler(event, process, ir_emulator, initial_taints, open_files, addrs_to_files):
@@ -114,7 +136,9 @@ def fread_handler(event, process, ir_emulator, initial_taints, open_files, addrs
         # print("Read @ %x : %02x (%s)" % (buf + i, data, chr(data)))
 
     open_files[file_desc]['f_pos'] = bytes_read
+"""
 
+"""
 def fgetc_handler(event, process, ir_emulator, initial_taints, open_files, addrs_to_files):
 
     ret_operand = ReilRegisterOperand("eax", 32)
@@ -132,21 +156,26 @@ def fgetc_handler(event, process, ir_emulator, initial_taints, open_files, addrs
     #FIXME: missing code
 
     open_files[file_desc]['f_pos'] = open_files[file_desc]['f_pos'] + 1
+"""
+
 
 def process_event(process, event, ir_emulator, initial_taints, open_files, addrs_to_files):
     if isinstance(event, CallIntel32):
         if event.name == "open":
-            open_handler(event, process, open_files)
+            return open_handler(event, process, open_files)
 
-        if event.name == "fopen":
-            fopen_handler(event, process, open_files)
+        if event.name == "__close":
+            return close_handler(event, process, open_files)
+
+        #if event.name == "fopen":
+        #    fopen_handler(event, process, open_files)
 
         if event.name == "read":
-            read_handler(event, process, ir_emulator, initial_taints, open_files, addrs_to_files)
+            return read_handler(event, process, ir_emulator, initial_taints, open_files, addrs_to_files)
 
-        if event.name == "fread":
-            fread_handler(event, process, ir_emulator, initial_taints, open_files, addrs_to_files)
+        #if event.name == "fread":
+        #    fread_handler(event, process, ir_emulator, initial_taints, open_files, addrs_to_files)
 
-        if event.name == "fgetc" or event.name == "_IO_getc":
-            fgetc_handler(event, process, ir_emulator, initial_taints, open_files, addrs_to_files)
+        #if event.name == "fgetc" or event.name == "_IO_getc":
+        #    fgetc_handler(event, process, ir_emulator, initial_taints, open_files, addrs_to_files)
 

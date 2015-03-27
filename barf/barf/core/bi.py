@@ -166,6 +166,12 @@ class BinaryFile(object):
         # support PEs.
         try:
 
+            bfd = Bfd("/lib/i386-linux-gnu/libc.so.6")
+            #self._libc_symbols = bfd.symbols
+            x = map(lambda (x,y): (y.name,x), bfd.symbols.items())
+            x = reversed(x)
+
+            self._libc_symbols = dict(x)
             bfd = Bfd(filename)
 
             self._sections = bfd.sections
@@ -203,7 +209,6 @@ class BinaryFile(object):
                         self.libs[lib] = BinaryFile(lib, deps=False)
         except:
             logger.error("BFD could not open the file.", exc_info=True)
-
             pass
 
         try:

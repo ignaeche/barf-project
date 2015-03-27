@@ -65,13 +65,20 @@ class ProcessControl(object):
 
         self.breakpoint(ea_start)
         self.cont()
+        #POC
 
-        for func in hooked_functions:
-            if func in self.binary.plt:
-                addr = self.binary.plt[func]
-                self.breakpoint(addr)
-                self.hooked_functions[addr] = func, self.filename
-                print "[+] Hooking",func,"at",hex(addr)
+        #for func in hooked_functions:
+        #    if func in self.binary._libc_symbols:
+        #        print hex(self.binary._libc_symbols[func].value)
+
+        #assert(0)
+
+        #for func in hooked_functions:
+        #    if func in self.binary.plt:
+        #        addr = self.binary.plt[func]
+        #        self.breakpoint(addr)
+        #        self.hooked_functions[addr] = func, self.filename
+        #        print "[+] Hooking",func,"at",hex(addr)
 
         self.mm = self.process.readMappings()
         self.libs_start = dict()
@@ -81,15 +88,15 @@ class ProcessControl(object):
                 self.libs_start[m.pathname] = m.start
 
         #print self.libs_start
-
-        for lib_filename,lib_binary in self.binary.libs.items():
-
-            for func in hooked_functions:
-                if func in lib_binary.plt:
-                    addr = self.libs_start[lib_filename] + lib_binary.plt[func]
+        #print self.mm
+        #for lib_filename,lib_binary in self.binary.libs.items():
+        lib_filename = "/lib/i386-linux-gnu/libc-2.19.so"
+        for func in hooked_functions:
+                if func in self.binary._libc_symbols:
+                    addr = self.libs_start[lib_filename] + self.binary._libc_symbols[func]
                     self.breakpoint(addr)
                     self.hooked_functions[addr] = func, lib_filename
-                    print "[+] Hooking",func,"at",hex(addr), lib_filename
+                    print "[+] Hooking",func,"at",hex(addr), lib_filename#, self.libs_start[lib_filename], self.libs_start[lib_filename]
 
         #print map(str,self.libs_start.keys())
         #print map(hex,self.libs_start.values())
@@ -134,24 +141,49 @@ class ProcessControl(object):
             ip = process.getInstrPointer()
             ip = ip - 1
 
-            if (ip) in self.hooked_functions:
+            if ip in self.hooked_functions:            
+                print "ENTERING HOOK FUNCTION"
+                call_ip = ip
+
+                # remove call breakpoint
+                breakpoint = self.process.findBreakpoint(call_ip)
+                breakpoint.desinstall(set_ip=True)
+
+                # extract argument
                 name, module = self.hooked_functions[ip]
                 event = Call(name, module, (self.arch, self.arch_mode))
                 event.detect_parameters(self.process)
                 event.detect_return_address(self.process)
 
+                #print event.name, map(hex,event.param_values)
+
                 return_address = event.get_return_address()
+                #print "adding:", hex(return_address)
+
+                # hook return address 
                 self.breakpoint(return_address)
 
+                # continue until return
                 self.process.cont()
                 self.dbg.waitProcessEvent()
+
+                # extract return value
                 event.detect_return_value(self.process)
 
                 ip = process.getInstrPointer()
                 ip = ip - 1
 
-                breakpoint = self.process.findBreakpoint(ip)
+                return_ip = ip
+
+                #print "removing:", hex(return_ip)
+                assert(return_address == return_ip)
+
+                # remove return breakpoint
+                breakpoint = self.process.findBreakpoint(return_ip)
                 breakpoint.desinstall(set_ip=True)
+ 
+                # reinstall call breakpoint
+                self.breakpoint(call_ip)
             else:
                 breakpoint = self.process.findBreakpoint(ip)
                 breakpoint.desinstall(set_ip=True)
@@ -174,29 +206,57 @@ class ProcessControl(object):
         ip = ip - 1
 
         if ip in self.hooked_functions:
-            print "ENTERING HOOK FUNCTION"
-            name, module = self.hooked_functions[ip]
-            event = Call(name, module, (self.arch, self.arch_mode))
-            event.detect_parameters(self.process)
-            event.detect_return_address(self.process)
+                print "ENTERING HOOK FUNCTION"
+                call_ip = ip
 
-            return_address = event.get_return_address()
-            self.breakpoint(return_address)
-
-            self.process.cont()
-            self.dbg.waitProcessEvent()
-            event.detect_return_value(self.process)
-
-            ip = process.getInstrPointer()
-            ip = ip - 1
-
-            breakpoint = self.process.findBreakpoint(ip)
-            breakpoint.desinstall(set_ip=True)
-        else:
-            breakpoint = self.process.findBreakpoint(ip)
-
-            if breakpoint:
+                # remove call breakpoint
+                breakpoint = self.process.findBreakpoint(call_ip)
                 breakpoint.desinstall(set_ip=True)
+
+                # extract argument
+                name, module = self.hooked_functions[ip]
+                event = Call(name, module, (self.arch, self.arch_mode))
+                event.detect_parameters(self.process)
+                event.detect_return_address(self.process)
+
+                #print event.name, map(hex,event.param_values)
+
+                return_address = event.get_return_address()
+                #print "adding:", hex(return_address)
+
+                # hook return address 
+                self.breakpoint(return_address)
+
+                # continue until return
+                self.process.cont()
+                self.dbg.waitProcessEvent()
+
+                # extract return value
+                event.detect_return_value(self.process)
+
+                ip = process.getInstrPointer()
+                ip = ip - 1
+
+                return_ip = ip
+
+                #print "removing:", hex(return_ip)
+                assert(return_address == return_ip)
+
+                # remove return breakpoint
+                breakpoint = self.process.findBreakpoint(return_ip)
+                breakpoint.desinstall(set_ip=True)
+ 
+                # reinstall call breakpoint
+                self.breakpoint(call_ip)
+
+        else:
+            pass
+            #assert(0)
+            #print "single step event:", event
+            #breakpoint = self.process.findBreakpoint(ip)
+
+            #if breakpoint:
+            #    breakpoint.desinstall(set_ip=True)
 
         return event
 
