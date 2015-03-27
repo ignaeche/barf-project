@@ -14,7 +14,6 @@ class ProcessEnd(ProcessEvent):
 class CallIntel32(ProcessEvent):
 
     def __init__(self, name, module):
-
         assert(name in specs)
         spec = specs[name]
         self.ret = str(spec[0])

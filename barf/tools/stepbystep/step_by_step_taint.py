@@ -212,8 +212,10 @@ def process_binary(barf, args, ea_start, ea_end):
 
     binary = barf.binary
     pcontrol = ProcessControl()
+    #hooked_functions=["open", "fopen", "read", "fread", "fgetc", "_IO_getc"]
+    hooked_functions=["open","read","__close"]
 
-    process = pcontrol.start_process(binary, args, ea_start, ea_end, hooked_functions=["open", "fopen", "read", "fread", "fgetc", "_IO_getc"])
+    process = pcontrol.start_process(binary, args, ea_start, ea_end, hooked_functions)
 
     barf.ir_translator.reset()
     barf.smt_translator.reset()
@@ -245,10 +247,16 @@ def process_binary(barf, args, ea_start, ea_end):
     addrs_to_vars = defaultdict(lambda: [])
     addrs_to_files = {}
 
-    # Continue until the first hooked function.
+    # Continue until the first taint
+
     event = pcontrol.cont()
 
-    process_event(process, event, ir_emulator, initial_taints, open_files, addrs_to_files)
+    while (not process_event(process, event, ir_emulator, initial_taints, open_files, addrs_to_files)):
+       event = pcontrol.cont()
+
+    #event = pcontrol.cont()
+
+    #process_event(process, event, ir_emulator, initial_taints, open_files, addrs_to_files)
 
     ir_emulator._process = process
     ir_emulator._flags = barf.arch_info.registers_flags
