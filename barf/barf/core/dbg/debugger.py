@@ -44,6 +44,10 @@ class ProcessControl(object):
         self.process = None
         self.last_signal = []
 
+        self.last_event = None
+        self.last_call_ip = None
+        self.last_return_ip = None
+
     def start_process(self, binary, args, ea_start, ea_end, hooked_functions = []):
         self.binary = binary
 
@@ -141,7 +145,7 @@ class ProcessControl(object):
             ip = process.getInstrPointer()
             ip = ip - 1
 
-            if ip in self.hooked_functions:            
+            if ip in self.hooked_functions:
                 print "ENTERING HOOK FUNCTION"
                 call_ip = ip
 
@@ -160,7 +164,7 @@ class ProcessControl(object):
                 return_address = event.get_return_address()
                 #print "adding:", hex(return_address)
 
-                # hook return address 
+                # hook return address
                 self.breakpoint(return_address)
 
                 # continue until return
@@ -181,7 +185,7 @@ class ProcessControl(object):
                 # remove return breakpoint
                 breakpoint = self.process.findBreakpoint(return_ip)
                 breakpoint.desinstall(set_ip=True)
- 
+
                 # reinstall call breakpoint
                 self.breakpoint(call_ip)
             else:
@@ -207,10 +211,10 @@ class ProcessControl(object):
 
         if ip in self.hooked_functions:
                 print "ENTERING HOOK FUNCTION"
-                call_ip = ip
+                self.last_call_ip = ip
 
                 # remove call breakpoint
-                breakpoint = self.process.findBreakpoint(call_ip)
+                breakpoint = self.process.findBreakpoint(self.last_call_ip)
                 breakpoint.desinstall(set_ip=True)
 
                 # extract argument
@@ -219,46 +223,52 @@ class ProcessControl(object):
                 event.detect_parameters(self.process)
                 event.detect_return_address(self.process)
 
+                self.last_event = event
+
                 #print event.name, map(hex,event.param_values)
 
-                return_address = event.get_return_address()
+                self.last_return_ip = event.get_return_address()
                 #print "adding:", hex(return_address)
 
-                # hook return address 
-                self.breakpoint(return_address)
+                # hook return address
+                self.breakpoint(self.last_return_ip)
+
+                return None
 
                 # continue until return
-                self.process.cont()
-                self.dbg.waitProcessEvent()
+                #self.process.cont()
+                #self.dbg.waitProcessEvent()
 
+        elif ip == self.last_return_ip:
                 # extract return value
-                event.detect_return_value(self.process)
+                print self.last_return_ip, self.last_event, hex(ip)
+                #print hex(ip)
 
-                ip = process.getInstrPointer()
-                ip = ip - 1
+                assert(self.last_event is not None)
+                assert(self.last_return_ip is not None)
+
+                self.last_event.detect_return_value(self.process)
+
+                #ip = process.getInstrPointer()
+                #ip = ip - 1
 
                 return_ip = ip
 
                 #print "removing:", hex(return_ip)
-                assert(return_address == return_ip)
+                assert(self.last_return_ip == return_ip)
 
                 # remove return breakpoint
                 breakpoint = self.process.findBreakpoint(return_ip)
                 breakpoint.desinstall(set_ip=True)
- 
+
                 # reinstall call breakpoint
-                self.breakpoint(call_ip)
+                self.breakpoint(self.last_call_ip)
 
-        else:
-            pass
-            #assert(0)
-            #print "single step event:", event
-            #breakpoint = self.process.findBreakpoint(ip)
+                self.last_call_ip = None
+                self.last_return_ip = None
+                self.last_event = None
 
-            #if breakpoint:
-            #    breakpoint.desinstall(set_ip=True)
-
-        return event
+                return event
 
     def breakpoint(self, address):
 
