@@ -166,18 +166,18 @@ class BinaryFile(object):
         # support PEs.
         try:
 
-            bfd = Bfd("/lib/i386-linux-gnu/libc.so.6")
+            #bfd = Bfd("/lib/i386-linux-gnu/libc.so.6")
             #self._libc_symbols = bfd.symbols
-            x = map(lambda (x,y): (y.name,x), bfd.symbols.items())
-            x = reversed(x)
+            #x = map(lambda (x,y): (y.name,x), bfd.symbols.items())
+            #x = reversed(x)
 
-            self._libc_symbols = dict(x)
+            #self._libc_symbols = dict(x)
             bfd = Bfd(filename)
 
             self._sections = bfd.sections
             self._start_address = bfd.start_address
 
-            self._populate_plt_got(filename,0x0)
+            #self._populate_plt_got(filename,0x0)
 
             # get text section
             stext = self._sections.get(".text")
@@ -199,6 +199,7 @@ class BinaryFile(object):
             self._arch = self._map_architecture(arch_name)
             self._arch_mode = self._map_architecture_mode(arch_name, arch_size)
 
+            """
             self.libs = dict()
 
             if self._deps:
@@ -207,6 +208,7 @@ class BinaryFile(object):
                     if "/" in lib:
                         lib = os.path.realpath(lib)
                         self.libs[lib] = BinaryFile(lib, deps=False)
+            """
         except:
             logger.error("BFD could not open the file.", exc_info=True)
             pass
@@ -316,3 +318,34 @@ class BinaryFile(object):
 
     def _text_section_writer(self):
         raise Exception("section .text is readonly.")
+
+
+class LibC(object):
+
+    """Binary file representation.
+    """
+    def __init__(self, path="/lib/i386-linux-gnu/libc.so.6"):
+       
+        self._realpath =  os.path.realpath(path)
+        bfd = Bfd(self._realpath)
+        x = map(lambda (x,y): (y.name,x), bfd.symbols.items())
+        x = reversed(x)
+
+        self._libc_symbols = dict(x)
+
+    @property
+    def symbols(self):
+        """Get file name.
+        """
+        return self._libc_symbols
+  
+    @property
+    def path(self):
+        """Get file name.
+        """
+        return self._realpath
+ 
+LibC = LibC()
+ 
+
+

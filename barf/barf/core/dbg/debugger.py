@@ -27,9 +27,9 @@
 from signal import SIGTRAP
 from time import sleep
 
+from barf.core.bi import LibC
 from run import createChild
 from event import *
-#from mm  import MemoryMaps
 from ptrace.debugger import PtraceDebugger
 from ptrace.error import PtraceError
 from ptrace.ctypes_tools import (truncateWord, formatWordHex, formatAddress,
@@ -69,20 +69,6 @@ class ProcessControl(object):
 
         self.breakpoint(ea_start)
         self.cont()
-        #POC
-
-        #for func in hooked_functions:
-        #    if func in self.binary._libc_symbols:
-        #        print hex(self.binary._libc_symbols[func].value)
-
-        #assert(0)
-
-        #for func in hooked_functions:
-        #    if func in self.binary.plt:
-        #        addr = self.binary.plt[func]
-        #        self.breakpoint(addr)
-        #        self.hooked_functions[addr] = func, self.filename
-        #        print "[+] Hooking",func,"at",hex(addr)
 
         self.mm = self.process.readMappings()
         self.libs_start = dict()
@@ -91,19 +77,16 @@ class ProcessControl(object):
             if m.pathname not in [None, "[vsyscall]", "[vdso]"] and 'x' in m.permissions:
                 self.libs_start[m.pathname] = m.start
 
-        #print self.libs_start
-        #print self.mm
-        #for lib_filename,lib_binary in self.binary.libs.items():
-        lib_filename = "/lib/i386-linux-gnu/libc-2.19.so"
+        lib_filename = LibC.path
+        lib_symbols = LibC.symbols
+
         for func in hooked_functions:
-                if func in self.binary._libc_symbols:
-                    addr = self.libs_start[lib_filename] + self.binary._libc_symbols[func]
+                if func in lib_symbols:
+                    addr = self.libs_start[lib_filename] + lib_symbols[func]
                     self.breakpoint(addr)
                     self.hooked_functions[addr] = func, lib_filename
                     print "[+] Hooking",func,"at",hex(addr), lib_filename#, self.libs_start[lib_filename], self.libs_start[lib_filename]
 
-        #print map(str,self.libs_start.keys())
-        #print map(hex,self.libs_start.values())
         return self.process
 
     def wait_event(self):
