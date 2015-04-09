@@ -22,7 +22,7 @@ from barf.core.reil import ReilMnemonic
 from barf.core.reil import ReilRegisterOperand
 
 from hooks import process_event
-from exploration import new_to_explore, next_to_explore, add_to_explore, was_explored
+from exploration import ExplorationProcess #new_to_explore, next_to_explore, add_to_explore, was_explored
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +78,7 @@ def generate_input_files(c_analyzer, mem_exprs, open_files, addrs_to_files, iter
 
     return new_inputs
 
-def analyze_tainted_branch_data(c_analyzer, branches_taint_data, iteration):
+def analyze_tainted_branch_data(exploration, c_analyzer, branches_taint_data, iteration):
     """For each input branch (which depends on tainted input), it
     prints the values needed to avoid taking that branch.
 
@@ -119,17 +119,22 @@ def analyze_tainted_branch_data(c_analyzer, branches_taint_data, iteration):
                 mem_exprs[tainted_addr] = mem_expr
 
         # Add instructions to the code analyzer.
+
         jcc_index = 0
+        trace_id = []
+
         for instr in instrs_list[:-1]:
+            #print hex(instr.address), instr
             if instr.mnemonic == ReilMnemonic.JCC and \
                 isinstance(instr.operands[0], ReilRegisterOperand):
                 op1_var = c_analyzer.get_operand_var(instr.operands[0])
 
-                jcc_cond_val = branches_taint_data[jcc_index]['branch_condition_value']
+                jcc_cond_val = branch_val[jcc_index]
 
                 c_analyzer.add_constraint(op1_var == jcc_cond_val)
+                trace_id.append((instr.address, jcc_cond_val == 0x0))
 
-                jcc_cond_val += 1
+                jcc_index += 1
 
             c_analyzer.add_instruction(instr)
 
@@ -137,7 +142,18 @@ def analyze_tainted_branch_data(c_analyzer, branches_taint_data, iteration):
         branch_cond_var = c_analyzer.get_operand_expr(branch_cond, mode="post")
 
         # Set wanted branch condition.
-        c_analyzer.set_postcondition(branch_cond_var != branch_val)
+        c_analyzer.set_postcondition(branch_cond_var != branch_val[jcc_index])
+ 
+        explored_trace = list(trace_id)
+        to_explore_trace = list(trace_id)
+
+        explored_trace.append((instrs_list[-1].address, branch_val[jcc_index] == 0x0))
+        to_explore_trace.append((instrs_list[-1].address, not(branch_val[jcc_index] == 0x0)))
+
+        exploration.add_to_explored(explored_trace)
+
+        if exploration.was_explored(to_explore_trace) or exploration.will_be_explored(to_explore_trace):
+            continue
 
         # Print results.
         ruler = "# {0} #".format("=" * 76)
@@ -157,7 +173,7 @@ def analyze_tainted_branch_data(c_analyzer, branches_taint_data, iteration):
 
         if c_analyzer.check() != 'sat':
             print("UnSat Constraints!!!")
-            new_inputs.append(None)
+            exploration.add_to_explored(to_explore_trace)
             print(footer)
             continue
 
@@ -171,11 +187,12 @@ def analyze_tainted_branch_data(c_analyzer, branches_taint_data, iteration):
 
         # New Input Files
         print(title.format(title="New Input Files"))
-        new_inputs += generate_input_files(c_analyzer, mem_exprs, open_files, addrs_to_files, iteration, idx)
+        new_input = generate_input_files(c_analyzer, mem_exprs, open_files, addrs_to_files, iteration, idx)
+        exploration.add_to_explore((to_explore_trace, File(*new_input[0])))
 
         print(footer)
 
-    return new_inputs
+    return None
 
 def concretize_instruction(instruction, emulator):
     if instruction.mnemonic not in [ReilMnemonic.LDM]:
@@ -212,8 +229,7 @@ def process_binary(barf, args, ea_start, ea_end):
 
     binary = barf.binary
     pcontrol = ProcessControl()
-    #hooked_functions=["open", "fopen", "read", "fread", "fgetc", "_IO_getc"]
-    hooked_functions=["open","read","__close"]
+    hooked_functions=["open","read"]
 
     process = pcontrol.start_process(binary, args, ea_start, ea_end, hooked_functions)
 
@@ -241,6 +257,7 @@ def process_binary(barf, args, ea_start, ea_end):
     mapper = host_arch_info.alias_mapper
 
     branches_taint_data = []
+    cond_values = []
     tainted_instrs = []
     open_files = {}
     initial_taints = []
@@ -310,14 +327,15 @@ def process_binary(barf, args, ea_start, ea_end):
                     if ir_emulator.get_operand_taint(cond):
                         print("[+] Tainted JCC @ 0x%08x" % asm_instr.address)
 
-                        cond_value = ir_emulator.read_operand(cond)
+                        cond_values.append(ir_emulator.read_operand(cond))
+                        #print("cond:", cond_value)
 
                         tainted_instrs.append(reil_instr)
 
                         branches_taint_data.append({
                             'branch_address' : addr,
                             'branch_condition_register' : cond,
-                            'branch_condition_value' : cond_value,
+                            'branch_condition_value' : list(cond_values),
                             'tainted_instructions' : list(tainted_instrs),
                             'open_files' : dict(open_files),
                             'initial_taints' : list(initial_taints),
@@ -367,30 +385,18 @@ def main(args):
 
         sys.exit(-1)
 
-    #input_files = []
+    exploration = ExplorationProcess()
 
     inputs = prepare_inputs(barf.testcase["args"] + barf.testcase["files"])
     branches_taint_data = process_binary(barf, inputs, ea_start, ea_end)
-    new_raw_files = analyze_tainted_branch_data(barf.code_analyzer, branches_taint_data, 0)
-    #new_files = map(lambda args: File(*args), new_raw_files)
+    new_raw_files = analyze_tainted_branch_data(exploration,barf.code_analyzer, branches_taint_data, 0)
 
-    #map(add_to_explore, zip(branches_taint_data, new_files))
-    for (branch, raw_file) in zip(branches_taint_data, new_raw_files):
-        if not was_explored(branch) and raw_file is not None:
-            add_to_explore((branch, File(*raw_file)))
+    while exploration.new_to_explore():
 
-
-    while new_to_explore():
-
-        branch, input_file = next_to_explore()
+        _, input_file = exploration.next_to_explore()
         inputs = prepare_inputs(barf.testcase["args"] + [input_file])
         branches_taint_data = process_binary(barf, inputs, ea_start, ea_end)
-        new_raw_files = analyze_tainted_branch_data(barf.code_analyzer, branches_taint_data, 0)
-
-        for (branch, raw_file) in zip(branches_taint_data, new_raw_files):
-          if not was_explored(branch) and raw_file is not None:
-              add_to_explore( (branch, File(*raw_file)) )
-
+        new_raw_files = analyze_tainted_branch_data(exploration, barf.code_analyzer, branches_taint_data, 0)
         time.sleep(10)
 
 

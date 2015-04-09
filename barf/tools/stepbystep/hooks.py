@@ -164,8 +164,8 @@ def process_event(process, event, ir_emulator, initial_taints, open_files, addrs
         if event.name == "open":
             return open_handler(event, process, open_files)
 
-        if event.name == "__close":
-            return close_handler(event, process, open_files)
+        #if event.name == "__close":
+        #    return close_handler(event, process, open_files)
 
         #if event.name == "fopen":
         #    fopen_handler(event, process, open_files)
