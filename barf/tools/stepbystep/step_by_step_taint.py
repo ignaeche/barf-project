@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+from __future__ import print_function
 
 import logging
 import os
@@ -46,7 +47,7 @@ def get_tainted_operands(instr, emulator):
 
     return tainted_oprnds
 
-def generate_input_files(c_analyzer, mem_exprs, open_files, addrs_to_files, iteration, branch_index):
+def generate_input_files(c_analyzer, mem_exprs, open_files, addrs_to_files, iteration, branch_index, analysis_file):
     new_inputs = []
 
     for fd in open_files:
@@ -71,19 +72,21 @@ def generate_input_files(c_analyzer, mem_exprs, open_files, addrs_to_files, iter
             f.write(file_content)
 
         # Print new file name and content.
-        print("Name: " + new_filename)
-        print("Content: " + file_content)
+        print("Name: %s" % new_filename, file=analysis_file)
+        print("Content: %s" % file_content, file=analysis_file)
+
+        print("[+] Generating input file: %s" % new_filename)
 
         new_inputs.append((filename, file_content))
 
     return new_inputs
 
-def analyze_tainted_branch_data(exploration, c_analyzer, branches_taint_data, iteration):
+def analyze_tainted_branch_data(exploration, c_analyzer, branches_taint_data, iteration, testcase_dir, input_counter):
     """For each input branch (which depends on tainted input), it
     prints the values needed to avoid taking that branch.
 
     """
-    print("Total branches : %d" % len(branches_taint_data))
+    print("[+] Total branches : %d" % len(branches_taint_data))
 
     new_inputs = []
 
@@ -119,7 +122,6 @@ def analyze_tainted_branch_data(exploration, c_analyzer, branches_taint_data, it
                 mem_exprs[tainted_addr] = mem_expr
 
         # Add instructions to the code analyzer.
-
         jcc_index = 0
         trace_id = []
 
@@ -143,7 +145,7 @@ def analyze_tainted_branch_data(exploration, c_analyzer, branches_taint_data, it
 
         # Set wanted branch condition.
         c_analyzer.set_postcondition(branch_cond_var != branch_val[jcc_index])
- 
+
         explored_trace = list(trace_id)
         to_explore_trace = list(trace_id)
 
@@ -155,42 +157,50 @@ def analyze_tainted_branch_data(exploration, c_analyzer, branches_taint_data, it
         if exploration.was_explored(to_explore_trace) or exploration.will_be_explored(to_explore_trace):
             continue
 
+        analysis_filename = testcase_dir + "/crash/branch_analysis_%03d_%03d_%03d.txt" % (input_counter, iteration, idx)
+        analysis_file = open(analysis_filename, "w")
+        print("[+] Generating analysis file: %s" % analysis_filename)
+
         # Print results.
         ruler = "# {0} #".format("=" * 76)
         title = "{ruler}\n# {{title}}\n{ruler}".format(ruler=ruler)
         footer = "{0}\n{0}".format("~" * 80)
 
         # Branch Information
-        print(title.format(title="Branch Information"))
-        print("Branch number : %d" % idx)
-        print("Branch address : 0x%08x" % branch_addr)
-        print("Branch taken? : %s" % (branch_val == 0x1))
+        print(title.format(title="Branch Information"), file=analysis_file)
+        print("Branch number : %d" % idx, file=analysis_file)
+        print("Branch address : 0x%08x" % branch_addr, file=analysis_file)
+        print("Branch taken? : %s" % (branch_val == 0x1), file=analysis_file)
 
         # Tainted Instructions
-        print(title.format(title="Tainted Instructions"))
+        print(title.format(title="Tainted Instructions"), file=analysis_file)
         for instr in instrs_list:
-            print instr
+            print(instr, file=analysis_file)
 
         if c_analyzer.check() != 'sat':
-            print("UnSat Constraints!!!")
+            print("UnSat Constraints!!!", file=analysis_file)
             exploration.add_to_explored(to_explore_trace)
-            print(footer)
+            print(footer, file=analysis_file)
+
+            analysis_file.close()
             continue
 
         # Memory State
         msg = "mem @ 0x{:08x} : {:02x} ({:s})"
-        print(title.format(title="Memory State"))
+        print(title.format(title="Memory State"), file=analysis_file)
         for tainted_addr, mem_expr in sorted(mem_exprs.items()):
             value = c_analyzer.get_expr_value(mem_expr)
 
-            print(msg.format(tainted_addr, value, chr(value)))
+            print(msg.format(tainted_addr, value, chr(value)), file=analysis_file)
 
         # New Input Files
-        print(title.format(title="New Input Files"))
-        new_input = generate_input_files(c_analyzer, mem_exprs, open_files, addrs_to_files, iteration, idx)
+        print(title.format(title="New Input Files"), file=analysis_file)
+        new_input = generate_input_files(c_analyzer, mem_exprs, open_files, addrs_to_files, iteration, idx, analysis_file)
         exploration.add_to_explore((to_explore_trace, File(*new_input[0])))
 
         print(footer)
+
+        analysis_file.close()
 
     return None
 
@@ -368,15 +378,15 @@ def main(args):
     """Main function.
     """
     try:
-        filename = os.path.abspath(args[1])
+        testcase_path = os.path.abspath(args[1])
 
         ea_start = int(args.setdefault(2, "0x0"), 16)
         ea_end = int(args.setdefault(3, "0x0"), 16)
 
-        barf = BARF(filename)
+        barf = BARF(testcase_path)
     except Exception as err:
         print(err)
-        print("[-] Error opening file : %s" % filename)
+        print("[-] Error opening file : %s" % testcase_path)
 
         sys.exit(1)
 
@@ -387,17 +397,21 @@ def main(args):
 
     exploration = ExplorationProcess()
 
+    input_counter = 0
+
     inputs = prepare_inputs(barf.testcase["args"] + barf.testcase["files"])
     branches_taint_data = process_binary(barf, inputs, ea_start, ea_end)
-    new_raw_files = analyze_tainted_branch_data(exploration,barf.code_analyzer, branches_taint_data, 0)
+    new_raw_files = analyze_tainted_branch_data(exploration,barf.code_analyzer, branches_taint_data, 0, testcase_path, input_counter)
+
+    input_counter += 1
 
     while exploration.new_to_explore():
-
         _, input_file = exploration.next_to_explore()
         inputs = prepare_inputs(barf.testcase["args"] + [input_file])
         branches_taint_data = process_binary(barf, inputs, ea_start, ea_end)
-        new_raw_files = analyze_tainted_branch_data(exploration, barf.code_analyzer, branches_taint_data, 0)
-        time.sleep(10)
+        new_raw_files = analyze_tainted_branch_data(exploration, barf.code_analyzer, branches_taint_data, 0, testcase_path, input_counter)
+        # time.sleep(10)
+        input_counter += 1
 
 
 if __name__ == "__main__":
@@ -406,8 +420,8 @@ if __name__ == "__main__":
     # 2. For now, it only taints data from the 'read' function.
 
     if open("/proc/sys/kernel/randomize_va_space").read().strip() <> "0":
-        print "Address space layout randomization (ASLR) is enabled, disable it before continue"
-        print "Hint: # echo 0 > /proc/sys/kernel/randomize_va_space"
+        print("Address space layout randomization (ASLR) is enabled, disable it before continue")
+        print("Hint: # echo 0 > /proc/sys/kernel/randomize_va_space")
         sys.exit(-1)
 
     main(dict(enumerate(sys.argv)))
