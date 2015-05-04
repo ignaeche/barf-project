@@ -4,8 +4,6 @@ import logging
 
 from barf.core.dbg.input import File
 
-from barf.core.reil import ReilEmptyOperand
-from barf.core.reil import ReilImmediateOperand
 from barf.core.reil import ReilMnemonic
 from barf.core.reil import ReilRegisterOperand
 
@@ -51,8 +49,6 @@ def analyze_tainted_branch_data(exploration, c_analyzer, branches_taint_data, it
 
     """
     print("[+] Total branches : %d" % len(branches_taint_data))
-
-    new_inputs = []
 
     for idx, branch_taint_data in enumerate(branches_taint_data):
         logger.info("Branch analysis #{}".format(idx))

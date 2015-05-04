@@ -1,7 +1,4 @@
-from barf.core.reil import ReilRegisterOperand
 from barf.core.dbg.event import CallIntel32
-from ptrace.cpu_info import (CPU_POWERPC, CPU_INTEL, CPU_X86_64, CPU_I386)
-from ptrace.ctypes_tools import bytes2word
 
 """
 #FIXME: move this function to another file
@@ -34,7 +31,7 @@ def open_handler(event, process, open_files):
 
 def close_handler(event, process, open_files):
     # Get parameters.
-    file_ptr,_ = event.get_typed_parameters()[0]
+    file_ptr, _ = event.get_typed_parameters()[0]
     file_desc = event.return_value
 
     #print "closing:", file_desc
@@ -68,7 +65,7 @@ def read_handler(event, process, ir_emulator, initial_taints, open_files, addrs_
     buf, _ = event.get_typed_parameters()[1]
     bytes_read = event.return_value
 
-    finfo = open_files.get(file_desc,None)
+    finfo = open_files.get(file_desc, None)
     if finfo is None: #or not (finfo['filename'] == "input1"):
         return False
 
