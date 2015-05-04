@@ -161,5 +161,3 @@ def analyze_tainted_branch_data(exploration, c_analyzer, branches_taint_data, it
         print(footer)
 
         analysis_file.close()
-
-    return None
