@@ -63,6 +63,66 @@ def concretize_instruction(instruction, emulator):
 
     return instruction
 
+def process_reil_instruction(ir_emulator, reil_instr, branches_taint_data, cond_values, addrs_to_vars, tainted_instrs, open_files, initial_taints, addrs_to_files):
+    if reil_instr.mnemonic == ReilMnemonic.LDM:
+        if isinstance(reil_instr.operands[0], ReilRegisterOperand):
+            oprnd = reil_instr.operands[0]
+
+            addr = ir_emulator.read_operand(oprnd)
+            size = reil_instr.operands[2].size
+
+            if ir_emulator.get_memory_taint(addr, size):
+                oprnd_new = ReilRegisterOperand(oprnd.name + "_" + str(addr), oprnd.size)
+                reil_instr.operands[0] = oprnd_new
+
+                addrs_to_vars[addr].append((oprnd_new, size))
+
+                tainted_instrs.append(reil_instr)
+    elif reil_instr.mnemonic == ReilMnemonic.JCC:
+        if isinstance(reil_instr.operands[0], ReilRegisterOperand):
+
+            cond = reil_instr.operands[0]
+
+            if ir_emulator.get_operand_taint(cond):
+                address = reil_instr.address >> 0x8
+
+                print("[+] Tainted JCC @ 0x%08x" % address)
+
+                cond_values.append(ir_emulator.read_operand(cond))
+
+                tainted_instrs.append(reil_instr)
+
+                branches_taint_data.append({
+                    'branch_address' : address,
+                    'branch_condition_register' : cond,
+                    'branch_condition_value' : list(cond_values),
+                    'tainted_instructions' : list(tainted_instrs),
+                    'open_files' : dict(open_files),
+                    'initial_taints' : list(initial_taints),
+                    'addrs_to_vars' : dict(addrs_to_vars),
+                    'addrs_to_files' : dict(addrs_to_files),
+                })
+    else:
+        if len(get_tainted_operands(reil_instr, ir_emulator)) > 0:
+            concrete_instr = concretize_instruction(reil_instr, ir_emulator)
+
+            tainted_instrs.append(concrete_instr)
+
+def get_host_architecture_information():
+    native_platform = platform.machine()
+
+    if native_platform == 'i386':
+        host_arch_info = X86ArchitectureInformation(ARCH_X86_MODE_32)
+    if native_platform == 'i686':
+        host_arch_info = X86ArchitectureInformation(ARCH_X86_MODE_32)
+    elif native_platform == 'x86_64':
+        host_arch_info = X86ArchitectureInformation(ARCH_X86_MODE_64)
+    else:
+        print("[-] Error executing at platform '%s'" % native_platform)
+        exit(-1)
+
+    return host_arch_info
+
 def process_binary(barf, args, ea_start, ea_end):
     """Executes the input binary and tracks Information about the
     branches that depends on input data.
@@ -80,21 +140,14 @@ def process_binary(barf, args, ea_start, ea_end):
     barf.smt_translator.reset()
     barf.code_analyzer.reset(full=True)
 
-    ir_emulator = barf.ir_emulator
     c_analyzer = barf.code_analyzer
     c_analyzer.set_arch_info(barf.arch_info)
 
-    native_platform = platform.machine()
+    ir_emulator = barf.ir_emulator
+    ir_emulator._process = process
+    ir_emulator._flags = barf.arch_info.registers_flags
 
-    if native_platform == 'i386':
-        host_arch_info = X86ArchitectureInformation(ARCH_X86_MODE_32)
-    if native_platform == 'i686':
-        host_arch_info = X86ArchitectureInformation(ARCH_X86_MODE_32)
-    elif native_platform == 'x86_64':
-        host_arch_info = X86ArchitectureInformation(ARCH_X86_MODE_64)
-    else:
-        print("[-] Error executing at platform '%s'" % native_platform)
-        exit(-1)
+    host_arch_info = get_host_architecture_information()
 
     registers = barf.arch_info.registers_gp_base
     mapper = host_arch_info.alias_mapper
@@ -108,18 +161,10 @@ def process_binary(barf, args, ea_start, ea_end):
     addrs_to_files = {}
 
     # Continue until the first taint
-
     event = pcontrol.cont()
 
     while (not process_event(process, event, ir_emulator, initial_taints, open_files, addrs_to_files)):
         event = pcontrol.cont()
-
-    #event = pcontrol.cont()
-
-    #process_event(process, event, ir_emulator, initial_taints, open_files, addrs_to_files)
-
-    ir_emulator._process = process
-    ir_emulator._flags = barf.arch_info.registers_flags
 
     while pcontrol:
         # Get some bytes from current IP.
@@ -148,48 +193,7 @@ def process_binary(barf, args, ea_start, ea_end):
             ir_emulator.execute_lite([reil_instr])
 
             # Process REIL instruction
-            if reil_instr.mnemonic == ReilMnemonic.LDM:
-                if isinstance(reil_instr.operands[0], ReilRegisterOperand):
-                    oprnd = reil_instr.operands[0]
-
-                    addr = ir_emulator.read_operand(oprnd)
-                    size = reil_instr.operands[2].size
-
-                    if ir_emulator.get_memory_taint(addr, size):
-                        oprnd_new = ReilRegisterOperand(oprnd.name + "_" + str(addr), oprnd.size)
-                        reil_instr.operands[0] = oprnd_new
-
-                        addrs_to_vars[addr].append((oprnd_new, size))
-
-                        tainted_instrs.append(reil_instr)
-            elif reil_instr.mnemonic == ReilMnemonic.JCC:
-                if isinstance(reil_instr.operands[0], ReilRegisterOperand):
-
-                    cond = reil_instr.operands[0]
-
-                    if ir_emulator.get_operand_taint(cond):
-                        print("[+] Tainted JCC @ 0x%08x" % asm_instr.address)
-
-                        cond_values.append(ir_emulator.read_operand(cond))
-                        #print("cond:", cond_value)
-
-                        tainted_instrs.append(reil_instr)
-
-                        branches_taint_data.append({
-                            'branch_address' : addr,
-                            'branch_condition_register' : cond,
-                            'branch_condition_value' : list(cond_values),
-                            'tainted_instructions' : list(tainted_instrs),
-                            'open_files' : dict(open_files),
-                            'initial_taints' : list(initial_taints),
-                            'addrs_to_vars' : dict(addrs_to_vars),
-                            'addrs_to_files' : dict(addrs_to_files),
-                        })
-            else:
-                if len(get_tainted_operands(reil_instr, ir_emulator)) > 0:
-                    concrete_instr = concretize_instruction(reil_instr, ir_emulator)
-
-                    tainted_instrs.append(concrete_instr)
+            process_reil_instruction(ir_emulator, reil_instr, branches_taint_data, cond_values, addrs_to_vars, tainted_instrs, open_files, initial_taints, addrs_to_files)
 
         event = pcontrol.single_step()
 
