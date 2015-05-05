@@ -43,6 +43,19 @@ def generate_input_files(c_analyzer, mem_exprs, open_files, addrs_to_files, iter
 
     return new_inputs
 
+def check_path(exploration, instrs_list, trace_id, branch_val, jcc_index, to_explore_trace):
+    explored_trace = list(trace_id)
+
+    explored_trace.append((instrs_list[-1].address, branch_val[jcc_index] == 0x0))
+    to_explore_trace.append((instrs_list[-1].address, not(branch_val[jcc_index] == 0x0)))
+
+    exploration.add_to_explored(explored_trace)
+
+    if exploration.was_explored(to_explore_trace) or exploration.will_be_explored(to_explore_trace):
+        return False
+
+    return True
+
 def analyze_tainted_branch_data(exploration, c_analyzer, branches_taint_data, iteration, testcase_dir, input_counter):
     """For each input branch (which depends on tainted input), it
     prints the values needed to avoid taking that branch.
@@ -106,17 +119,13 @@ def analyze_tainted_branch_data(exploration, c_analyzer, branches_taint_data, it
         # Set wanted branch condition.
         c_analyzer.set_postcondition(branch_cond_var != branch_val[jcc_index])
 
-        explored_trace = list(trace_id)
+        # Check weather explore this path or not
         to_explore_trace = list(trace_id)
 
-        explored_trace.append((instrs_list[-1].address, branch_val[jcc_index] == 0x0))
-        to_explore_trace.append((instrs_list[-1].address, not(branch_val[jcc_index] == 0x0)))
-
-        exploration.add_to_explored(explored_trace)
-
-        if exploration.was_explored(to_explore_trace) or exploration.will_be_explored(to_explore_trace):
+        if not check_path(exploration, instrs_list, trace_id, branch_val, jcc_index, to_explore_trace):
             continue
 
+        # Analyze path
         analysis_filename = testcase_dir + "/crash/branch_analysis_%03d_%03d_%03d.txt" % (input_counter, iteration, idx)
         analysis_file = open(analysis_filename, "w")
         print("[+] Generating analysis file: %s" % analysis_filename)
