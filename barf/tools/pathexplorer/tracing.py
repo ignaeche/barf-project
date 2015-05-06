@@ -86,7 +86,7 @@ def process_reil_instruction(ir_emulator, reil_instr, branches_taint_data, cond_
             if ir_emulator.get_operand_taint(cond):
                 address = reil_instr.address >> 0x8
 
-                print("[+] Tainted JCC @ 0x%08x" % address)
+                print("  [+] Tainted JCC found @ 0x%08x" % address)
 
                 cond_values.append(ir_emulator.read_operand(cond))
 
@@ -128,8 +128,6 @@ def process_binary(barf, args, ea_start, ea_end):
     branches that depends on input data.
 
     """
-    print("[+] Executing x86 to REIL...")
-
     binary = barf.binary
     pcontrol = ProcessControl()
     hooked_functions = ["open", "read"]
@@ -153,6 +151,7 @@ def process_binary(barf, args, ea_start, ea_end):
     mapper = host_arch_info.alias_mapper
 
     branches_taint_data = []
+
     cond_values = []
     tainted_instrs = []
     open_files = {}
@@ -161,6 +160,8 @@ def process_binary(barf, args, ea_start, ea_end):
     addrs_to_files = {}
 
     # Continue until the first taint
+    print("[+] Start process tracing...")
+
     event = pcontrol.cont()
 
     while (not process_event(process, event, ir_emulator, initial_taints, open_files, addrs_to_files)):
@@ -200,13 +201,15 @@ def process_binary(barf, args, ea_start, ea_end):
         process_event(process, event, ir_emulator, initial_taints, open_files, addrs_to_files)
 
         if isinstance(event, ProcessExit):
-            print("[+] Process exit.")
+            print("  [+] Process exit.")
             break
 
         if isinstance(event, ProcessEnd):
-            print("[+] Process end.")
+            print("  [+] Process end.")
             break
 
     process.terminate()
+
+    print("  [+] Total tainted branches : %d" % len(branches_taint_data))
 
     return branches_taint_data

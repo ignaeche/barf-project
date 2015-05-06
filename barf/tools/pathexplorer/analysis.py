@@ -1,6 +1,7 @@
 from __future__ import print_function
 
 import logging
+import os
 
 from barf.core.dbg.input import File
 
@@ -31,7 +32,7 @@ def generate_input_files(c_analyzer, mem_exprs, open_files, addrs_to_files, iter
         new_filename = base_name + "_%03d_%03d" % (iteration, branch_index) + "." + extension
 
         # Write new file.
-        print("[+] Generating input file: %s" % new_filename)
+        print("    [+] Generating new input file: %s" % new_filename)
 
         with open(new_filename, "wb") as f:
             f.write(file_content)
@@ -58,7 +59,7 @@ def print_analysis_result(c_analyzer, testcase_dir, input_counter, iteration, id
     analysis_filename = testcase_dir + "/crash/branch_analysis_%03d_%03d_%03d.txt" % (input_counter, iteration, idx)
     analysis_file = open(analysis_filename, "w")
 
-    print("[+] Generating analysis file: %s" % analysis_filename)
+    print("    [+] Generating analysis file: %s" % os.path.basename(analysis_filename))
 
     # Print results.
     ruler = "# {0} #".format("=" * 76)
@@ -78,7 +79,6 @@ def print_analysis_result(c_analyzer, testcase_dir, input_counter, iteration, id
 
     if c_analyzer.check() != 'sat':
         print("UnSat Constraints!!!", file=analysis_file)
-        print(footer, file=analysis_file)
         analysis_file.close()
         return
 
@@ -98,8 +98,6 @@ def print_analysis_result(c_analyzer, testcase_dir, input_counter, iteration, id
         print("Name: %s" % file_name, file=analysis_file)
         print("Content: %s" % file_content, file=analysis_file)
 
-    print(footer)
-
     analysis_file.close()
 
 def analyze_tainted_branch_data(exploration, c_analyzer, branches_taint_data, iteration, testcase_dir, input_counter):
@@ -107,10 +105,12 @@ def analyze_tainted_branch_data(exploration, c_analyzer, branches_taint_data, it
     prints the values needed to avoid taking that branch.
 
     """
-    print("[+] Total branches : %d" % len(branches_taint_data))
+    print("[+] Start trace analysis...")
 
     for idx, branch_taint_data in enumerate(branches_taint_data):
         logger.info("Branch analysis #{}".format(idx))
+
+        print("  [+] Analysis branch: {}".format(idx))
 
         c_analyzer.reset(full=True)
 
@@ -168,6 +168,7 @@ def analyze_tainted_branch_data(exploration, c_analyzer, branches_taint_data, it
         to_explore_trace = list(trace_id)
 
         if not check_path(exploration, instrs_list, trace_id, branch_val, jcc_index, to_explore_trace):
+            print("    [+] Ignoring path...")
             continue
 
         if c_analyzer.check() != 'sat':
@@ -179,3 +180,5 @@ def analyze_tainted_branch_data(exploration, c_analyzer, branches_taint_data, it
 
         # Print results
         print_analysis_result(c_analyzer, testcase_dir, input_counter, iteration, idx, branch_addr, branch_val, instrs_list, mem_exprs, new_inputs)
+
+    print("{0}\n{0}".format("~" * 80))
