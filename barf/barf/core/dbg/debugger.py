@@ -85,7 +85,7 @@ class ProcessControl(object):
                     addr = self.libs_start[lib_filename] + lib_symbols[func]
                     self.breakpoint(addr)
                     self.hooked_functions[addr] = func, lib_filename
-                    print "[+] Hooking",func,"at",hex(addr), lib_filename#, self.libs_start[lib_filename], self.libs_start[lib_filename]
+                    # print "[+] Hooking",func,"at",hex(addr), lib_filename#, self.libs_start[lib_filename], self.libs_start[lib_filename]
 
         return self.process
 
@@ -129,7 +129,7 @@ class ProcessControl(object):
             ip = ip - 1
 
             if ip in self.hooked_functions:
-                print "ENTERING HOOK FUNCTION"
+                # print "ENTERING HOOK FUNCTION"
                 call_ip = ip
 
                 # remove call breakpoint
