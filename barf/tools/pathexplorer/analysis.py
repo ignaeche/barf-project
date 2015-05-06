@@ -9,7 +9,7 @@ from barf.core.reil import ReilRegisterOperand
 
 logger = logging.getLogger(__name__)
 
-def generate_input_files(c_analyzer, mem_exprs, open_files, addrs_to_files, iteration, branch_index, analysis_file):
+def generate_input_files(c_analyzer, mem_exprs, open_files, addrs_to_files, iteration, branch_index):
     new_inputs = []
 
     for fd in open_files:
@@ -24,20 +24,17 @@ def generate_input_files(c_analyzer, mem_exprs, open_files, addrs_to_files, iter
             for pos in addrs_to_files[tainted_addr].get(fd, []):
                 file_content[pos] = c_analyzer.get_expr_value(mem_expr)
 
-        # Write new file.
+        # Generate new file name.
         full_name, extension = filename.split(".")
         base_name = full_name.split("_", 1)[0]
 
         new_filename = base_name + "_%03d_%03d" % (iteration, branch_index) + "." + extension
 
+        # Write new file.
+        print("[+] Generating input file: %s" % new_filename)
+
         with open(new_filename, "wb") as f:
             f.write(file_content)
-
-        # Print new file name and content.
-        print("Name: %s" % new_filename, file=analysis_file)
-        print("Content: %s" % file_content, file=analysis_file)
-
-        print("[+] Generating input file: %s" % new_filename)
 
         new_inputs.append((filename, file_content))
 
@@ -55,6 +52,55 @@ def check_path(exploration, instrs_list, trace_id, branch_val, jcc_index, to_exp
         return False
 
     return True
+
+def print_analysis_result(c_analyzer, testcase_dir, input_counter, iteration, idx, branch_addr, branch_val, instrs_list, mem_exprs, new_inputs):
+    # Analyze path
+    analysis_filename = testcase_dir + "/crash/branch_analysis_%03d_%03d_%03d.txt" % (input_counter, iteration, idx)
+    analysis_file = open(analysis_filename, "w")
+
+    print("[+] Generating analysis file: %s" % analysis_filename)
+
+    # Print results.
+    ruler = "# {0} #".format("=" * 76)
+    title = "{ruler}\n# {{title}}\n{ruler}".format(ruler=ruler)
+    footer = "{0}\n{0}".format("~" * 80)
+
+    # Branch Information
+    print(title.format(title="Branch Information"), file=analysis_file)
+    print("Branch number : %d" % idx, file=analysis_file)
+    print("Branch address : 0x%08x" % branch_addr, file=analysis_file)
+    print("Branch taken? : %s" % (branch_val == 0x1), file=analysis_file)
+
+    # Tainted Instructions
+    print(title.format(title="Tainted Instructions"), file=analysis_file)
+    for instr in instrs_list:
+        print(instr, file=analysis_file)
+
+    if c_analyzer.check() != 'sat':
+        print("UnSat Constraints!!!", file=analysis_file)
+        print(footer, file=analysis_file)
+        analysis_file.close()
+        return
+
+    # Memory State
+    msg = "mem @ 0x{:08x} : {:02x} ({:s})"
+    print(title.format(title="Memory State"), file=analysis_file)
+    for tainted_addr, mem_expr in sorted(mem_exprs.items()):
+        value = c_analyzer.get_expr_value(mem_expr)
+
+        print(msg.format(tainted_addr, value, chr(value)), file=analysis_file)
+
+    # New Input Files
+    print(title.format(title="New Input Files"), file=analysis_file)
+
+    # Print file name and content.
+    for file_name, file_content in new_inputs:
+        print("Name: %s" % file_name, file=analysis_file)
+        print("Content: %s" % file_content, file=analysis_file)
+
+    print(footer)
+
+    analysis_file.close()
 
 def analyze_tainted_branch_data(exploration, c_analyzer, branches_taint_data, iteration, testcase_dir, input_counter):
     """For each input branch (which depends on tainted input), it
@@ -99,7 +145,6 @@ def analyze_tainted_branch_data(exploration, c_analyzer, branches_taint_data, it
         trace_id = []
 
         for instr in instrs_list[:-1]:
-            #print hex(instr.address), instr
             if instr.mnemonic == ReilMnemonic.JCC and \
                 isinstance(instr.operands[0], ReilRegisterOperand):
                 op1_var = c_analyzer.get_operand_var(instr.operands[0])
@@ -125,48 +170,12 @@ def analyze_tainted_branch_data(exploration, c_analyzer, branches_taint_data, it
         if not check_path(exploration, instrs_list, trace_id, branch_val, jcc_index, to_explore_trace):
             continue
 
-        # Analyze path
-        analysis_filename = testcase_dir + "/crash/branch_analysis_%03d_%03d_%03d.txt" % (input_counter, iteration, idx)
-        analysis_file = open(analysis_filename, "w")
-        print("[+] Generating analysis file: %s" % analysis_filename)
-
-        # Print results.
-        ruler = "# {0} #".format("=" * 76)
-        title = "{ruler}\n# {{title}}\n{ruler}".format(ruler=ruler)
-        footer = "{0}\n{0}".format("~" * 80)
-
-        # Branch Information
-        print(title.format(title="Branch Information"), file=analysis_file)
-        print("Branch number : %d" % idx, file=analysis_file)
-        print("Branch address : 0x%08x" % branch_addr, file=analysis_file)
-        print("Branch taken? : %s" % (branch_val == 0x1), file=analysis_file)
-
-        # Tainted Instructions
-        print(title.format(title="Tainted Instructions"), file=analysis_file)
-        for instr in instrs_list:
-            print(instr, file=analysis_file)
-
         if c_analyzer.check() != 'sat':
-            print("UnSat Constraints!!!", file=analysis_file)
+            new_inputs = []
             exploration.add_to_explored(to_explore_trace)
-            print(footer, file=analysis_file)
+        else:
+            new_inputs = generate_input_files(c_analyzer, mem_exprs, open_files, addrs_to_files, iteration, idx)
+            exploration.add_to_explore((to_explore_trace, File(*new_inputs[0])))
 
-            analysis_file.close()
-            continue
-
-        # Memory State
-        msg = "mem @ 0x{:08x} : {:02x} ({:s})"
-        print(title.format(title="Memory State"), file=analysis_file)
-        for tainted_addr, mem_expr in sorted(mem_exprs.items()):
-            value = c_analyzer.get_expr_value(mem_expr)
-
-            print(msg.format(tainted_addr, value, chr(value)), file=analysis_file)
-
-        # New Input Files
-        print(title.format(title="New Input Files"), file=analysis_file)
-        new_input = generate_input_files(c_analyzer, mem_exprs, open_files, addrs_to_files, iteration, idx, analysis_file)
-        exploration.add_to_explore((to_explore_trace, File(*new_input[0])))
-
-        print(footer)
-
-        analysis_file.close()
+        # Print results
+        print_analysis_result(c_analyzer, testcase_dir, input_counter, iteration, idx, branch_addr, branch_val, instrs_list, mem_exprs, new_inputs)
