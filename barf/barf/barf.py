@@ -308,6 +308,45 @@ class BARF(object):
 
         return bb_list
 
+    def emulate_reil(self, context, instrs):
+        """Emulate REIL instructions.
+
+        :param context: processor context
+        :type context: dict
+
+        :returns: a context
+        :rtype: dict
+
+        """
+        start_addr = instrs[0].address#ea_start if ea_start else self.binary.ea_start
+        end_addr = instrs[-1].address#ea_end if ea_end else self.binary.ea_end
+
+        # load registers
+        if 'registers' in context:
+            for reg, val in context['registers'].items():
+                self.ir_emulator.registers[reg] = val
+
+        # load memory
+        if 'memory' in context:
+            for addr, val in context['memory'].items():
+                self.ir_emulator.memory.write(addr, 32, val)
+
+        #instrs = [reil for _, _, reil in self.translate(ea_start, ea_end)]
+
+        self.ir_emulator.execute([instrs], start_addr, end_address=end_addr)
+
+        context_out = {}
+
+        # save registers
+        context_out['registers'] = {}
+        for reg, val in self.ir_emulator.registers.items():
+            context_out['registers'][reg] = val
+
+        # save memory
+        context_out['memory'] = {}
+
+        return context_out
+
     def emulate_full(self, context, ea_start=None, ea_end=None):
         """Emulate REIL instructions.
 
