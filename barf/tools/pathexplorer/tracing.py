@@ -191,7 +191,7 @@ def process_binary(barf, args, ea_start, ea_end):
         reil_instrs = barf.ir_translator.translate(asm_instr)
 
         # Set REIL emulator context.
-        ir_emulator.context = pcontrol.get_context(registers, mapper)
+        ir_emulator.registers = pcontrol.get_context(registers, mapper)
 
         # Process REIL instructions.
         for reil_instr in reil_instrs:
