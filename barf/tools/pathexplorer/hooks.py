@@ -70,7 +70,7 @@ def read_handler(event, process, ir_emulator, initial_taints, open_files, addrs_
         return False
 
     # Taint memory address.
-    ir_emulator.set_memory_taint(buf, bytes_read * 8, True)
+    ir_emulator.set_memory_taint(buf, bytes_read, True)
 
     # Keep record of inital taints.
     file_curr_pos = open_files[file_desc]['f_pos']
@@ -109,7 +109,7 @@ def fread_handler(event, process, ir_emulator, initial_taints, open_files, addrs
     bytes_read = event.return_value
 
     # Taint memory address.
-    ir_emulator.set_memory_taint(buf, bytes_read * 8, True)
+    ir_emulator.set_memory_taint(buf, bytes_read, True)
 
     # Keep record of inital taints.
     file_curr_pos = open_files[file_desc]['f_pos']
