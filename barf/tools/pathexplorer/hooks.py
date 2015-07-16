@@ -155,6 +155,7 @@ def fgetc_handler(event, process, ir_emulator, initial_taints, open_files, addrs
     open_files[file_desc]['f_pos'] = open_files[file_desc]['f_pos'] + 1
 """
 
+
 def process_event(process, event, ir_emulator, initial_taints, open_files, addrs_to_files):
     if isinstance(event, CallIntel32):
         if event.name == "open":

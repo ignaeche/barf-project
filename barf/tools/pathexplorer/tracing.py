@@ -101,7 +101,7 @@ def process_reil_instruction(ir_emulator, reil_instr, branches_taint_data, addrs
 
                     'open_files' : dict(open_files),
 
-                    'initial_taints' : initial_taints,
+                    'initial_taints' : list(initial_taints),
 
                     'addrs_to_vars' : dict(addrs_to_vars),
                     'addrs_to_files' : dict(addrs_to_files),
