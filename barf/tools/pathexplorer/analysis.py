@@ -41,11 +41,11 @@ def generate_input_files(c_analyzer, mem_exprs, open_files, addrs_to_files, iter
 
     return new_inputs
 
-def check_path(exploration, instrs_list, trace_id, branch_val, to_explore_trace):
+def check_path(exploration, instrs_list, trace_id, branch_val, jcc_index, to_explore_trace):
     explored_trace = list(trace_id)
 
-    explored_trace.append((instrs_list[-1][0].address, branch_val == 0x0))
-    to_explore_trace.append((instrs_list[-1][0].address, not(branch_val == 0x0)))
+    explored_trace.append((instrs_list[jcc_index][0].address, branch_val == 0x0))
+    to_explore_trace.append((instrs_list[jcc_index][0].address, not(branch_val == 0x0)))
 
     exploration.add_to_explored(explored_trace)
 
@@ -170,7 +170,7 @@ def analyze_tainted_branch_data(exploration, c_analyzer, branches_taint_data, it
         # Check weather explore this path or not
         to_explore_trace = list(trace_id)
 
-        if not check_path(exploration, instrs_list, trace_id, branch_val, to_explore_trace):
+        if not check_path(exploration, instrs_list, trace_id, branch_val, jcc_index, to_explore_trace):
             print("    [+] Ignoring path...")
             continue
 
