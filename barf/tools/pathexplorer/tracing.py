@@ -79,7 +79,7 @@ def process_reil_instruction(ir_emulator, reil_instr, branches_taint_data, addrs
                 oprnd_new = ReilRegisterOperand(oprnd.name + "_" + str(addr), oprnd.size)
                 reil_instr.operands[0] = oprnd_new
 
-                addrs_to_vars[addr].append((oprnd_new, size))
+                addrs_to_vars[addr].append((oprnd_new, size, timestamp))
 
                 tainted_instrs.append((reil_instr, None, timestamp))
     elif reil_instr.mnemonic == ReilMnemonic.JCC:
@@ -102,12 +102,10 @@ def process_reil_instruction(ir_emulator, reil_instr, branches_taint_data, addrs
 
                 branches_taint_data.append({
                     'tainted_instructions' : tainted_instrs,
-
                     'initial_taints' : initial_taints,
-
-                    'open_files' : dict(open_files),
-                    'addrs_to_vars' : dict(addrs_to_vars),
-                    'addrs_to_files' : dict(addrs_to_files),
+                    'addrs_to_vars' : addrs_to_vars,
+                    'open_files' : open_files,
+                    'addrs_to_files' : addrs_to_files,
                 })
     else:
         if len(get_tainted_operands(reil_instr, ir_emulator)) > 0:
