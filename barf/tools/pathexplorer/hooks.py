@@ -1,3 +1,5 @@
+import time
+
 from barf.core.dbg.event import CallIntel32
 
 """
@@ -75,9 +77,11 @@ def read_handler(event, process, ir_emulator, initial_taints, open_files, addrs_
     # Keep record of inital taints.
     file_curr_pos = open_files[file_desc]['f_pos']
 
+    timestamp = int(time.time())
+
     for i in xrange(0, bytes_read):
         # Keep track of inital taints.
-        initial_taints.append(buf + i)
+        initial_taints.append((buf + i, timestamp))
 
         # Keep track of files and current file position.
         d_entry = addrs_to_files.get(buf + i, {})

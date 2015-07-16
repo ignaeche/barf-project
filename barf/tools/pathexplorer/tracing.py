@@ -2,6 +2,8 @@ from __future__ import print_function
 
 import logging
 import platform
+import time
+
 from collections import defaultdict
 
 from barf.arch import ARCH_X86_MODE_32
@@ -64,6 +66,8 @@ def concretize_instruction(instruction, emulator):
     return instruction
 
 def process_reil_instruction(ir_emulator, reil_instr, branches_taint_data, addrs_to_vars, tainted_instrs, open_files, initial_taints, addrs_to_files):
+    timestamp = int(time.time())
+
     if reil_instr.mnemonic == ReilMnemonic.LDM:
         if isinstance(reil_instr.operands[0], ReilRegisterOperand):
             oprnd = reil_instr.operands[0]
@@ -77,7 +81,7 @@ def process_reil_instruction(ir_emulator, reil_instr, branches_taint_data, addrs
 
                 addrs_to_vars[addr].append((oprnd_new, size))
 
-                tainted_instrs.append((reil_instr, None))
+                tainted_instrs.append((reil_instr, None, timestamp))
     elif reil_instr.mnemonic == ReilMnemonic.JCC:
         if isinstance(reil_instr.operands[0], ReilRegisterOperand):
 
@@ -94,15 +98,14 @@ def process_reil_instruction(ir_emulator, reil_instr, branches_taint_data, addrs
                     'branch_condition_value' : ir_emulator.read_operand(cond)
                 }
 
-                tainted_instrs.append((reil_instr, branch_data))
+                tainted_instrs.append((reil_instr, branch_data, timestamp))
 
                 branches_taint_data.append({
                     'tainted_instructions' : tainted_instrs,
 
+                    'initial_taints' : initial_taints,
+
                     'open_files' : dict(open_files),
-
-                    'initial_taints' : list(initial_taints),
-
                     'addrs_to_vars' : dict(addrs_to_vars),
                     'addrs_to_files' : dict(addrs_to_files),
                 })
@@ -110,7 +113,7 @@ def process_reil_instruction(ir_emulator, reil_instr, branches_taint_data, addrs
         if len(get_tainted_operands(reil_instr, ir_emulator)) > 0:
             concrete_instr = concretize_instruction(reil_instr, ir_emulator)
 
-            tainted_instrs.append((concrete_instr, None))
+            tainted_instrs.append((concrete_instr, None, timestamp))
 
 def get_host_architecture_information():
     native_platform = platform.machine()
