@@ -41,11 +41,11 @@ def generate_input_files(c_analyzer, mem_exprs, open_files, addrs_to_files, iter
 
     return new_inputs
 
-def check_path(exploration, instrs_list, trace_id, branch_val, jcc_index, to_explore_trace):
+def check_path(exploration, instrs_list, trace_id, branch_val, to_explore_trace):
     explored_trace = list(trace_id)
 
-    explored_trace.append((instrs_list[-1].address, branch_val[jcc_index] == 0x0))
-    to_explore_trace.append((instrs_list[-1].address, not(branch_val[jcc_index] == 0x0)))
+    explored_trace.append((instrs_list[-1][0].address, branch_val == 0x0))
+    to_explore_trace.append((instrs_list[-1][0].address, not(branch_val == 0x0)))
 
     exploration.add_to_explored(explored_trace)
 
@@ -74,7 +74,7 @@ def print_analysis_result(c_analyzer, testcase_dir, input_counter, iteration, id
 
     # Tainted Instructions
     print(title.format(title="Tainted Instructions"), file=analysis_file)
-    for instr in instrs_list:
+    for instr, _ in instrs_list:
         print(instr, file=analysis_file)
 
     if c_analyzer.check() != 'sat':
@@ -116,10 +116,6 @@ def analyze_tainted_branch_data(exploration, c_analyzer, branches_taint_data, it
 
         # TODO: Simplify tainted instructions, i.e, remove superfluous
         # instructions.
-        branch_addr = branch_taint_data['branch_address']
-        branch_cond = branch_taint_data['branch_condition_register']
-        branch_val = branch_taint_data['branch_condition_value']
-
         instrs_list = branch_taint_data['tainted_instructions']
 
         open_files = branch_taint_data['open_files']
@@ -144,12 +140,19 @@ def analyze_tainted_branch_data(exploration, c_analyzer, branches_taint_data, it
         jcc_index = 0
         trace_id = []
 
-        for instr in instrs_list[:-1]:
+        for instr, _ in instrs_list:
             if instr.mnemonic == ReilMnemonic.JCC and \
                 isinstance(instr.operands[0], ReilRegisterOperand):
+                branch_addr = data['branch_address']
+                branch_cond = data['branch_condition_register']
+                branch_val = data['branch_condition_value']
+
+                if jcc_index == idx:
+                    break
+
                 op1_var = c_analyzer.get_operand_var(instr.operands[0])
 
-                jcc_cond_val = branch_val[jcc_index]
+                jcc_cond_val = branch_val
 
                 c_analyzer.add_constraint(op1_var == jcc_cond_val)
                 trace_id.append((instr.address, jcc_cond_val == 0x0))
@@ -162,12 +165,12 @@ def analyze_tainted_branch_data(exploration, c_analyzer, branches_taint_data, it
         branch_cond_var = c_analyzer.get_operand_expr(branch_cond, mode="post")
 
         # Set wanted branch condition.
-        c_analyzer.set_postcondition(branch_cond_var != branch_val[jcc_index])
+        c_analyzer.set_postcondition(branch_cond_var != branch_val)
 
         # Check weather explore this path or not
         to_explore_trace = list(trace_id)
 
-        if not check_path(exploration, instrs_list, trace_id, branch_val, jcc_index, to_explore_trace):
+        if not check_path(exploration, instrs_list, trace_id, branch_val, to_explore_trace):
             print("    [+] Ignoring path...")
             continue
 
