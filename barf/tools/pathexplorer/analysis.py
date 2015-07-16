@@ -147,7 +147,10 @@ def analyze_tainted_branch_data(exploration, c_analyzer, branches_taint_data, it
             if timestamp > branch_timestamp:
                     break
 
-            for reg, access_size in addrs_to_vars.get(tainted_addr, []):
+            for reg, access_size, timestamp2 in addrs_to_vars.get(tainted_addr, []):
+                if timestamp > branch_timestamp:
+                    continue
+
                 addr_expr = c_analyzer.get_operand_var(reg)
                 mem_expr = c_analyzer.get_memory_expr(
                                 addr_expr, access_size / 8, mode="pre")
