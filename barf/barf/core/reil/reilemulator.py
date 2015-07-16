@@ -271,6 +271,9 @@ class ReilMemoryEx(ReilMemory):
         """
         return self.__write_count
 
+    def written(self, address):
+        return self._memory.has_key(address)
+
 
 class ReilCpuZeroDivisionError(Exception):
     pass
