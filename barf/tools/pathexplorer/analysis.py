@@ -140,7 +140,7 @@ def analyze_tainted_branch_data(exploration, c_analyzer, branches_taint_data, it
         jcc_index = 0
         trace_id = []
 
-        for instr, _ in instrs_list:
+        for instr, data in instrs_list:
             if instr.mnemonic == ReilMnemonic.JCC and \
                 isinstance(instr.operands[0], ReilRegisterOperand):
                 branch_addr = data['branch_address']
