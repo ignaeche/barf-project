@@ -124,16 +124,17 @@ def get_host_architecture_information():
     return host_arch_info
 
 def ldm_pre_hanlder(emu, instr, process):
-    base_addr = emu.read_operand(instr.operands[0])
+    if instr.mnemonic == ReilMnemonic.LDM:
+        base_addr = emu.read_operand(instr.operands[0])
 
-    for i in xrange(0, instr.operands[2].size / 8):
-        addr = base_addr + i
+        for i in xrange(0, instr.operands[2].size / 8):
+            addr = base_addr + i
 
-        if not emu.memory.written(addr):
-            try:
-                emu.write_memory(addr, 8, ord(process.readBytes(addr, 1)))
-            except:
-                logger.info("Error reading process memory @ 0x{:08x}".format(addr))
+            if not emu.memory.written(addr):
+                try:
+                    emu.write_memory(addr, 8, ord(process.readBytes(addr, 1)))
+                except:
+                    logger.info("Error reading process memory @ 0x{:08x}".format(addr))
 
 def process_binary(barf, args, ea_start, ea_end):
     """Executes the input binary and tracks Information about the
@@ -154,7 +155,7 @@ def process_binary(barf, args, ea_start, ea_end):
     c_analyzer.set_arch_info(barf.arch_info)
 
     ir_emulator = barf.ir_emulator
-    ir_emulator.set_instruction_pre_handler(ReilMnemonic.LDM, ldm_pre_hanlder, process)
+    ir_emulator.set_instruction_pre_handler(ldm_pre_hanlder, process)
 
     host_arch_info = get_host_architecture_information()
 
