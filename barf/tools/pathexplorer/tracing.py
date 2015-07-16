@@ -65,53 +65,44 @@ def concretize_instruction(instruction, emulator):
 
     return instruction
 
-def process_reil_instruction(ir_emulator, reil_instr, branches_taint_data, addrs_to_vars, tainted_instrs, open_files, initial_taints, addrs_to_files):
+def process_reil_instruction(emulator, instr, trace, addrs_to_vars):
     timestamp = int(time.time())
 
-    if reil_instr.mnemonic == ReilMnemonic.LDM:
-        if isinstance(reil_instr.operands[0], ReilRegisterOperand):
-            oprnd = reil_instr.operands[0]
+    if instr.mnemonic == ReilMnemonic.LDM:
+        if isinstance(instr.operands[0], ReilRegisterOperand):
+            oprnd = instr.operands[0]
 
-            addr = ir_emulator.read_operand(oprnd)
-            size = reil_instr.operands[2].size
+            addr = emulator.read_operand(oprnd)
+            size = instr.operands[2].size
 
-            if ir_emulator.get_memory_taint(addr, size):
+            if emulator.get_memory_taint(addr, size):
                 oprnd_new = ReilRegisterOperand(oprnd.name + "_" + str(addr), oprnd.size)
-                reil_instr.operands[0] = oprnd_new
+                instr.operands[0] = oprnd_new
 
                 addrs_to_vars[addr].append((oprnd_new, size, timestamp))
 
-                tainted_instrs.append((reil_instr, None, timestamp))
-    elif reil_instr.mnemonic == ReilMnemonic.JCC:
-        if isinstance(reil_instr.operands[0], ReilRegisterOperand):
+                trace.append((instr, None, timestamp))
+    elif instr.mnemonic == ReilMnemonic.JCC:
+        if isinstance(instr.operands[0], ReilRegisterOperand):
+            cond = instr.operands[0]
 
-            cond = reil_instr.operands[0]
-
-            if ir_emulator.get_operand_taint(cond):
-                address = reil_instr.address >> 0x8
+            if emulator.get_operand_taint(cond):
+                address = instr.address >> 0x8
 
                 print("  [+] Tainted JCC found @ 0x%08x" % address)
 
-                branch_data = {
-                    'branch_address' : address,
-                    'branch_condition_register' : cond,
-                    'branch_condition_value' : ir_emulator.read_operand(cond)
+                data = {
+                    'address' : address,
+                    'condition' : cond,
+                    'value' : emulator.read_operand(cond)
                 }
 
-                tainted_instrs.append((reil_instr, branch_data, timestamp))
-
-                branches_taint_data.append({
-                    'tainted_instructions' : tainted_instrs,
-                    'initial_taints' : initial_taints,
-                    'addrs_to_vars' : addrs_to_vars,
-                    'open_files' : open_files,
-                    'addrs_to_files' : addrs_to_files,
-                })
+                trace.append((instr, data, timestamp))
     else:
-        if len(get_tainted_operands(reil_instr, ir_emulator)) > 0:
-            concrete_instr = concretize_instruction(reil_instr, ir_emulator)
+        if len(get_tainted_operands(instr, emulator)) > 0:
+            concrete_instr = concretize_instruction(instr, emulator)
 
-            tainted_instrs.append((concrete_instr, None, timestamp))
+            trace.append((concrete_instr, None, timestamp))
 
 def get_host_architecture_information():
     native_platform = platform.machine()
@@ -128,7 +119,7 @@ def get_host_architecture_information():
 
     return host_arch_info
 
-def ldm_pre_hanlder(emu, instr, process):
+def instr_pre_hanlder(emu, instr, process):
     if instr.mnemonic == ReilMnemonic.LDM:
         base_addr = emu.read_operand(instr.operands[0])
 
@@ -159,17 +150,15 @@ def process_binary(barf, args, ea_start, ea_end):
     c_analyzer = barf.code_analyzer
     c_analyzer.set_arch_info(barf.arch_info)
 
-    ir_emulator = barf.ir_emulator
-    ir_emulator.set_instruction_pre_handler(ldm_pre_hanlder, process)
+    emulator = barf.ir_emulator
+    emulator.set_instruction_pre_handler(instr_pre_hanlder, process)
 
     host_arch_info = get_host_architecture_information()
 
     registers = barf.arch_info.registers_gp_base
     mapper = host_arch_info.alias_mapper
 
-    branches_taint_data = []
-
-    tainted_instrs = []
+    trace = []
     open_files = {}
     initial_taints = []
     addrs_to_vars = defaultdict(lambda: [])
@@ -180,7 +169,7 @@ def process_binary(barf, args, ea_start, ea_end):
 
     event = pcontrol.cont()
 
-    while (not process_event(process, event, ir_emulator, initial_taints, open_files, addrs_to_files)):
+    while (not process_event(process, event, emulator, initial_taints, open_files, addrs_to_files)):
         event = pcontrol.cont()
 
     while pcontrol:
@@ -196,7 +185,7 @@ def process_binary(barf, args, ea_start, ea_end):
         reil_instrs = barf.ir_translator.translate(asm_instr)
 
         # Set REIL emulator context.
-        ir_emulator.registers = pcontrol.get_context(registers, mapper)
+        emulator.registers = pcontrol.get_context(registers, mapper)
 
         # Process REIL instructions.
         for reil_instr in reil_instrs:
@@ -207,14 +196,14 @@ def process_binary(barf, args, ea_start, ea_end):
                 continue
 
             # Execute REIL instruction
-            ir_emulator.execute_lite([reil_instr])
+            emulator.execute_lite([reil_instr])
 
             # Process REIL instruction
-            process_reil_instruction(ir_emulator, reil_instr, branches_taint_data, addrs_to_vars, tainted_instrs, open_files, initial_taints, addrs_to_files)
+            process_reil_instruction(emulator, reil_instr, trace, addrs_to_vars)
 
         event = pcontrol.single_step()
 
-        process_event(process, event, ir_emulator, initial_taints, open_files, addrs_to_files)
+        process_event(process, event, emulator, initial_taints, open_files, addrs_to_files)
 
         if isinstance(event, ProcessExit):
             print("  [+] Process exit.")
@@ -226,6 +215,14 @@ def process_binary(barf, args, ea_start, ea_end):
 
     process.terminate()
 
-    print("  [+] Total tainted branches : %d" % len(branches_taint_data))
+    # print("  [+] Total tainted branches : %d" % len(branches_taint_data))
+
+    branches_taint_data = {
+        'trace' : trace,
+        'initial_taints' : initial_taints,
+        'addrs_to_vars' : addrs_to_vars,
+        'open_files' : open_files,
+        'addrs_to_files' : addrs_to_files,
+    }
 
     return branches_taint_data
