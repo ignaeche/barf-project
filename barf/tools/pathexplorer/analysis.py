@@ -100,37 +100,44 @@ def print_analysis_result(c_analyzer, testcase_dir, input_counter, iteration, id
 
     analysis_file.close()
 
-def analyze_tainted_branch_data(exploration, c_analyzer, branches_taint_data, iteration, testcase_dir, input_counter):
+def analyze_tainted_branch_data(exploration, c_analyzer, branch_taint_data, iteration, testcase_dir, input_counter):
     """For each input branch (which depends on tainted input), it
     prints the values needed to avoid taking that branch.
 
     """
     print("[+] Start trace analysis...")
 
-    for idx, branch_taint_data in enumerate(branches_taint_data):
+    # TODO: Simplify tainted instructions, i.e, remove superfluous
+    # instructions.
+    trace = branch_taint_data['trace']
+
+    open_files = branch_taint_data['open_files']
+
+    initial_taints = branch_taint_data['initial_taints']
+
+    addrs_to_vars = branch_taint_data['addrs_to_vars']
+    addrs_to_files = branch_taint_data['addrs_to_files']
+
+    # Compute branch count
+    branch_count = 0
+    for instr, data, _ in trace:
+        if instr.mnemonic == ReilMnemonic.JCC and \
+            isinstance(instr.operands[0], ReilRegisterOperand):
+            branch_count += 1
+
+    for idx in xrange(0, branch_count):
         logger.info("Branch analysis #{}".format(idx))
 
         print("  [+] Analysis branch: {}".format(idx))
 
         c_analyzer.reset(full=True)
 
-        # TODO: Simplify tainted instructions, i.e, remove superfluous
-        # instructions.
-        instrs_list = branch_taint_data['tainted_instructions']
-
-        open_files = branch_taint_data['open_files']
-
-        initial_taints = branch_taint_data['initial_taints']
-
-        addrs_to_vars = branch_taint_data['addrs_to_vars']
-        addrs_to_files = branch_taint_data['addrs_to_files']
-
         # Get current branch timestamp
         branch_timestamp = None
         jcc_index = 0
         trace_id = []
 
-        for instr, data, timestamp in instrs_list:
+        for instr, data, timestamp in trace:
             if instr.mnemonic == ReilMnemonic.JCC and \
                 isinstance(instr.operands[0], ReilRegisterOperand):
 
@@ -161,12 +168,12 @@ def analyze_tainted_branch_data(exploration, c_analyzer, branches_taint_data, it
         jcc_index = 0
         trace_id = []
 
-        for instr, data, _ in instrs_list:
+        for instr, data, _ in trace:
             if instr.mnemonic == ReilMnemonic.JCC and \
                 isinstance(instr.operands[0], ReilRegisterOperand):
-                branch_addr = data['branch_address']
-                branch_cond = data['branch_condition_register']
-                branch_val = data['branch_condition_value']
+                branch_addr = data['address']
+                branch_cond = data['condition']
+                branch_val = data['value']
 
                 if jcc_index == idx:
                     break
@@ -191,7 +198,7 @@ def analyze_tainted_branch_data(exploration, c_analyzer, branches_taint_data, it
         # Check weather explore this path or not
         to_explore_trace = list(trace_id)
 
-        if not check_path(exploration, instrs_list, trace_id, branch_val, jcc_index, to_explore_trace):
+        if not check_path(exploration, trace, trace_id, branch_val, jcc_index, to_explore_trace):
             print("    [+] Ignoring path...")
             continue
 
@@ -203,6 +210,6 @@ def analyze_tainted_branch_data(exploration, c_analyzer, branches_taint_data, it
             exploration.add_to_explore((to_explore_trace, File(*new_inputs[0])))
 
         # Print results
-        print_analysis_result(c_analyzer, testcase_dir, input_counter, iteration, idx, branch_addr, branch_val, instrs_list, mem_exprs, new_inputs)
+        print_analysis_result(c_analyzer, testcase_dir, input_counter, iteration, idx, branch_addr, branch_val, trace, mem_exprs, new_inputs)
 
     print("{0}\n{0}".format("~" * 80))
