@@ -74,7 +74,7 @@ def print_analysis_result(c_analyzer, testcase_dir, input_counter, iteration, id
 
     # Tainted Instructions
     print(title.format(title="Tainted Instructions"), file=analysis_file)
-    for instr, _ in instrs_list:
+    for instr, _, _ in instrs_list:
         print(instr, file=analysis_file)
 
     if c_analyzer.check() != 'sat':
@@ -125,10 +125,28 @@ def analyze_tainted_branch_data(exploration, c_analyzer, branches_taint_data, it
         addrs_to_vars = branch_taint_data['addrs_to_vars']
         addrs_to_files = branch_taint_data['addrs_to_files']
 
+        # Get current branch timestamp
+        branch_timestamp = None
+        jcc_index = 0
+        trace_id = []
+
+        for instr, data, timestamp in instrs_list:
+            if instr.mnemonic == ReilMnemonic.JCC and \
+                isinstance(instr.operands[0], ReilRegisterOperand):
+
+                if jcc_index == idx:
+                    branch_timestamp = timestamp
+                    break
+
+                jcc_index += 1
+
         # Add initial tainted addresses to the code analyzer.
         mem_exprs = {}
 
-        for tainted_addr in initial_taints:
+        for tainted_addr, timestamp in initial_taints:
+            if timestamp > branch_timestamp:
+                    break
+
             for reg, access_size in addrs_to_vars.get(tainted_addr, []):
                 addr_expr = c_analyzer.get_operand_var(reg)
                 mem_expr = c_analyzer.get_memory_expr(
@@ -140,7 +158,7 @@ def analyze_tainted_branch_data(exploration, c_analyzer, branches_taint_data, it
         jcc_index = 0
         trace_id = []
 
-        for instr, data in instrs_list:
+        for instr, data, _ in instrs_list:
             if instr.mnemonic == ReilMnemonic.JCC and \
                 isinstance(instr.operands[0], ReilRegisterOperand):
                 branch_addr = data['branch_address']
