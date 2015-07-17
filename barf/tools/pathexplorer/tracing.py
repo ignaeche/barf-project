@@ -132,7 +132,6 @@ def process_binary(barf, args, ea_start, ea_end):
     barf.code_analyzer.reset(full=True)
 
     c_analyzer = barf.code_analyzer
-    c_analyzer.set_arch_info(barf.arch_info)
 
     emulator = barf.ir_emulator
     emulator.set_instruction_pre_handler(instr_pre_hanlder, process)
