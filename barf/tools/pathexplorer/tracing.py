@@ -132,7 +132,7 @@ def ldm_pre_hanlder(emu, instr, process):
 
             if not emu.memory.written(addr):
                 try:
-                    emu.write_memory(addr, 8, ord(process.readBytes(addr, 1)))
+                    emu.write_memory(addr, 1, ord(process.readBytes(addr, 1)))
                 except:
                     logger.info("Error reading process memory @ 0x{:08x}".format(addr))
 
