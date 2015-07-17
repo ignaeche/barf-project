@@ -187,12 +187,9 @@ def analyze_tainted_branch_data(exploration, c_analyzer, branch_taint_data, iter
                 if jcc_index == idx:
                     break
 
-                op1_var = c_analyzer.get_operand_var(instr.operands[0])
-
-                jcc_cond_val = branch_val
-
-                c_analyzer.add_constraint(op1_var == jcc_cond_val)
-                trace_id.append((instr.address, jcc_cond_val == 0x0))
+                oprnd0_var = c_analyzer.get_operand_var(instr.operands[0])
+                c_analyzer.add_constraint(oprnd0_var == branch_val)
+                trace_id.append((instr.address, branch_val == 0x0))
 
                 jcc_index += 1
 
