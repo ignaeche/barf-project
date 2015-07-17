@@ -100,6 +100,30 @@ def print_analysis_result(c_analyzer, testcase_dir, input_counter, iteration, id
 
     analysis_file.close()
 
+def get_branch_count(trace):
+    branch_count = 0
+
+    for instr, _, _ in trace:
+        if instr.mnemonic == ReilMnemonic.JCC and \
+            isinstance(instr.operands[0], ReilRegisterOperand):
+            branch_count += 1
+
+    return branch_count
+
+def get_branch_timestamp(trace, branch_index):
+    branch_timestamp = None
+    index = 0
+
+    for instr, _, timestamp in trace:
+        if instr.mnemonic == ReilMnemonic.JCC and \
+            isinstance(instr.operands[0], ReilRegisterOperand):
+            if index == branch_index:
+                branch_timestamp = timestamp
+                break
+            index += 1
+
+    return branch_timestamp
+
 def analyze_tainted_branch_data(exploration, c_analyzer, branch_taint_data, iteration, testcase_dir, input_counter):
     """For each input branch (which depends on tainted input), it
     prints the values needed to avoid taking that branch.
@@ -118,12 +142,9 @@ def analyze_tainted_branch_data(exploration, c_analyzer, branch_taint_data, iter
     addrs_to_vars = branch_taint_data['addrs_to_vars']
     addrs_to_files = branch_taint_data['addrs_to_files']
 
-    # Compute branch count
-    branch_count = 0
-    for instr, data, _ in trace:
-        if instr.mnemonic == ReilMnemonic.JCC and \
-            isinstance(instr.operands[0], ReilRegisterOperand):
-            branch_count += 1
+    branch_count = get_branch_count(trace)
+
+    print("  [+] Total tainted branches : %d" % branch_count)
 
     for idx in xrange(0, branch_count):
         logger.info("Branch analysis #{}".format(idx))
@@ -133,19 +154,7 @@ def analyze_tainted_branch_data(exploration, c_analyzer, branch_taint_data, iter
         c_analyzer.reset(full=True)
 
         # Get current branch timestamp
-        branch_timestamp = None
-        jcc_index = 0
-        trace_id = []
-
-        for instr, data, timestamp in trace:
-            if instr.mnemonic == ReilMnemonic.JCC and \
-                isinstance(instr.operands[0], ReilRegisterOperand):
-
-                if jcc_index == idx:
-                    branch_timestamp = timestamp
-                    break
-
-                jcc_index += 1
+        branch_timestamp = get_branch_timestamp(trace, idx)
 
         # Add initial tainted addresses to the code analyzer.
         mem_exprs = {}

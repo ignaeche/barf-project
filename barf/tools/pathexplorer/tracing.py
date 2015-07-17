@@ -20,24 +20,6 @@ from hooks import process_event
 
 logger = logging.getLogger(__name__)
 
-def get_tainted_operands(instr, emulator):
-    """Returns an instruction's tainted operands.
-    """
-    tainted_oprnds = []
-
-    if instr.mnemonic == ReilMnemonic.LDM:
-        addr = emulator.read_operand(instr.operands[0])
-        size = instr.operands[2].size
-
-        if emulator.get_memory_taint(addr, size):
-            tainted_oprnds.append(addr)
-    else:
-        reg_oprnds = [oprnd for oprnd in instr.operands
-                        if isinstance(oprnd, ReilRegisterOperand)]
-        tainted_oprnds = [oprnd for oprnd in reg_oprnds
-                            if emulator.get_operand_taint(oprnd)]
-
-    return tainted_oprnds
 
 def concretize_instruction(instruction, emulator):
     if instruction.mnemonic not in [ReilMnemonic.LDM]:
@@ -66,40 +48,42 @@ def concretize_instruction(instruction, emulator):
     return instruction
 
 def process_reil_instruction(emulator, instr, trace, addrs_to_vars):
+    oprnd0, oprnd1, oprnd2 = instr.operands
+
     timestamp = int(time.time())
 
     if instr.mnemonic == ReilMnemonic.LDM:
-        if isinstance(instr.operands[0], ReilRegisterOperand):
-            oprnd = instr.operands[0]
-
-            addr = emulator.read_operand(oprnd)
-            size = instr.operands[2].size
+        if isinstance(oprnd0, ReilRegisterOperand):
+            addr = emulator.read_operand(oprnd0)
+            size = oprnd2.size
 
             if emulator.get_memory_taint(addr, size):
-                oprnd_new = ReilRegisterOperand(oprnd.name + "_" + str(addr), oprnd.size)
+                reg_name = oprnd0.name + "_" + str(addr)
+                oprnd_new = ReilRegisterOperand(reg_name, oprnd0.size)
                 instr.operands[0] = oprnd_new
 
                 addrs_to_vars[addr].append((oprnd_new, size, timestamp))
 
                 trace.append((instr, None, timestamp))
     elif instr.mnemonic == ReilMnemonic.JCC:
-        if isinstance(instr.operands[0], ReilRegisterOperand):
-            cond = instr.operands[0]
-
-            if emulator.get_operand_taint(cond):
+        if isinstance(oprnd0, ReilRegisterOperand):
+            if emulator.get_operand_taint(oprnd0):
                 address = instr.address >> 0x8
 
                 print("  [+] Tainted JCC found @ 0x%08x" % address)
 
                 data = {
                     'address' : address,
-                    'condition' : cond,
-                    'value' : emulator.read_operand(cond)
+                    'condition' : oprnd0,
+                    'value' : emulator.read_operand(oprnd0)
                 }
 
                 trace.append((instr, data, timestamp))
     else:
-        if len(get_tainted_operands(instr, emulator)) > 0:
+        oprnds_taint = [emulator.get_operand_taint(oprnd)
+                            for oprnd in instr.operands]
+
+        if any(oprnds_taint):
             concrete_instr = concretize_instruction(instr, emulator)
 
             trace.append((concrete_instr, None, timestamp))
@@ -179,16 +163,13 @@ def process_binary(barf, args, ea_start, ea_end):
         # Disassemble current native instruction.
         asm_instr = barf.disassembler.disassemble(process.readBytes(addr, 15), addr)
 
-        #print("0x{0:08x} : {1}".format(addr, asm_instr))
-
-        # Translate native instruction to REIL.
-        reil_instrs = barf.ir_translator.translate(asm_instr)
-
         # Set REIL emulator context.
         emulator.registers = pcontrol.get_context(registers, mapper)
 
         # Process REIL instructions.
-        for reil_instr in reil_instrs:
+        #print("0x{0:08x} : {1}".format(addr, asm_instr))
+
+        for reil_instr in barf.ir_translator.translate(asm_instr):
             # print("{0:14}{1}".format("", reil_instr))
 
             # If not supported, skip...
@@ -214,8 +195,6 @@ def process_binary(barf, args, ea_start, ea_end):
             break
 
     process.terminate()
-
-    # print("  [+] Total tainted branches : %d" % len(branches_taint_data))
 
     branches_taint_data = {
         'trace' : trace,
