@@ -24,9 +24,14 @@
 
 """Generic Debugger Interface.
 """
+import platform
+
 from signal import SIGTRAP
 from time import sleep
 
+import barf.arch as arch
+
+from barf.arch.x86.x86base import X86ArchitectureInformation
 from barf.core.bi import LibC
 from run import createChild
 from event import *
@@ -48,11 +53,18 @@ class ProcessControl(object):
         self.last_call_ip = None
         self.last_return_ip = None
 
+        self._host_arch = self._get_host_architecture_information()
+
     def start_process(self, binary, args, ea_start, ea_end, hooked_functions = []):
         self.binary = binary
 
         self.arch = self.binary.architecture
         self.arch_mode = self.binary.architecture_mode
+
+        if self.binary.architecture == arch.ARCH_X86:
+            self._guest_arch = X86ArchitectureInformation(self.arch_mode)
+        else:
+            raise Exception("Unsupported Architecture!")
 
         self.filename = binary.filename
         self.args = list(args)
@@ -266,17 +278,17 @@ class ProcessControl(object):
         #error("New breakpoint: %s" % bp)
         return bp
 
-    def get_context(self, registers, mapper):
+    def get_registers(self):
         context = {}
         #print "mapper:",mapper
-        for reg in registers:
+        for reg in self._guest_arch.registers_gp_base:
             # FIXME: Temporary ugly hack...
             if reg == 'rflags':
                 continue
 
             #print "reg",reg
-            if reg in mapper:
-                base, offset = mapper[reg]
+            if reg in self._host_arch.alias_mapper:
+                base, offset = self._host_arch.alias_mapper[reg]
             else:
                 base, offset = reg, 0
 
@@ -299,3 +311,18 @@ class ProcessControl(object):
         main_value |= (value_to_insert & 2**size-1) << offset
 
         return main_value
+
+    def _get_host_architecture_information(self):
+        native_platform = platform.machine()
+
+        if native_platform == 'i386':
+            host_arch_info = X86ArchitectureInformation(ARCH_X86_MODE_32)
+        if native_platform == 'i686':
+            host_arch_info = X86ArchitectureInformation(ARCH_X86_MODE_32)
+        elif native_platform == 'x86_64':
+            host_arch_info = X86ArchitectureInformation(ARCH_X86_MODE_64)
+        else:
+            print("[-] Error executing at platform '%s'" % native_platform)
+            exit(-1)
+
+        return host_arch_info

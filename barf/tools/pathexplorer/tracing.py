@@ -1,20 +1,17 @@
 from __future__ import print_function
 
 import logging
-import platform
 import time
 
 from collections import defaultdict
 
-from barf.arch import ARCH_X86_MODE_32
-from barf.arch import ARCH_X86_MODE_64
-from barf.arch.x86.x86base import X86ArchitectureInformation
+from barf.core.dbg.debugger import ProcessControl
+from barf.core.dbg.debugger import ProcessEnd
+from barf.core.dbg.debugger import ProcessExit
 from barf.core.reil import ReilEmptyOperand
 from barf.core.reil import ReilImmediateOperand
 from barf.core.reil import ReilMnemonic
 from barf.core.reil import ReilRegisterOperand
-
-from barf.core.dbg.debugger import ProcessControl, ProcessExit, ProcessEnd
 
 from hooks import process_event
 
@@ -48,7 +45,7 @@ def concretize_instruction(instruction, emulator):
     return instruction
 
 def process_reil_instruction(emulator, instr, trace, addrs_to_vars):
-    oprnd0, oprnd1, oprnd2 = instr.operands
+    oprnd0, _, oprnd2 = instr.operands
 
     timestamp = int(time.time())
 
@@ -88,21 +85,6 @@ def process_reil_instruction(emulator, instr, trace, addrs_to_vars):
 
             trace.append((concrete_instr, None, timestamp))
 
-def get_host_architecture_information():
-    native_platform = platform.machine()
-
-    if native_platform == 'i386':
-        host_arch_info = X86ArchitectureInformation(ARCH_X86_MODE_32)
-    if native_platform == 'i686':
-        host_arch_info = X86ArchitectureInformation(ARCH_X86_MODE_32)
-    elif native_platform == 'x86_64':
-        host_arch_info = X86ArchitectureInformation(ARCH_X86_MODE_64)
-    else:
-        print("[-] Error executing at platform '%s'" % native_platform)
-        exit(-1)
-
-    return host_arch_info
-
 def instr_pre_hanlder(emu, instr, process):
     if instr.mnemonic == ReilMnemonic.LDM:
         base_addr = emu.read_operand(instr.operands[0])
@@ -121,25 +103,15 @@ def process_binary(barf, args, ea_start, ea_end):
     branches that depends on input data.
 
     """
-    binary = barf.binary
     pcontrol = ProcessControl()
     hooked_functions = ["open", "read"]
 
-    process = pcontrol.start_process(binary, args, ea_start, ea_end, hooked_functions)
+    process = pcontrol.start_process(barf.binary, args, ea_start, ea_end, hooked_functions)
 
     barf.ir_translator.reset()
-    barf.smt_translator.reset()
-    barf.code_analyzer.reset(full=True)
-
-    c_analyzer = barf.code_analyzer
 
     emulator = barf.ir_emulator
     emulator.set_instruction_pre_handler(instr_pre_hanlder, process)
-
-    host_arch_info = get_host_architecture_information()
-
-    registers = barf.arch_info.registers_gp_base
-    mapper = host_arch_info.alias_mapper
 
     trace = []
     open_files = {}
@@ -147,26 +119,24 @@ def process_binary(barf, args, ea_start, ea_end):
     addrs_to_vars = defaultdict(lambda: [])
     addrs_to_files = {}
 
-    # Continue until the first taint
     print("[+] Start process tracing...")
-
-    event = pcontrol.cont()
-
-    while (not process_event(process, event, emulator, initial_taints, open_files, addrs_to_files)):
+    # Continue until the first taint
+    while True:
         event = pcontrol.cont()
 
-    while pcontrol:
-        # Get some bytes from current IP.
-        addr = process.getInstrPointer()
+        if process_event(process, event, emulator, initial_taints, open_files, addrs_to_files):
+            break
 
-        # Disassemble current native instruction.
-        asm_instr = barf.disassembler.disassemble(process.readBytes(addr, 15), addr)
+    # Start processing trace
+    while pcontrol:
+        ip = process.getInstrPointer()
+        asm_instr = barf.disassembler.disassemble(process.readBytes(ip, 15), ip)
 
         # Set REIL emulator context.
-        emulator.registers = pcontrol.get_context(registers, mapper)
+        emulator.registers = pcontrol.get_registers()
 
         # Process REIL instructions.
-        #print("0x{0:08x} : {1}".format(addr, asm_instr))
+        #print("0x{0:08x} : {1}".format(ip, asm_instr))
 
         for reil_instr in barf.ir_translator.translate(asm_instr):
             # print("{0:14}{1}".format("", reil_instr))
@@ -175,10 +145,8 @@ def process_binary(barf, args, ea_start, ea_end):
             if reil_instr.mnemonic == ReilMnemonic.UNKN:
                 continue
 
-            # Execute REIL instruction
             emulator.execute_lite([reil_instr])
 
-            # Process REIL instruction
             process_reil_instruction(emulator, reil_instr, trace, addrs_to_vars)
 
         event = pcontrol.single_step()
