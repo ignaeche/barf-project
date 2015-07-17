@@ -89,7 +89,7 @@ def read_handler(event, process, ir_emulator, initial_taints, open_files, addrs_
 
         # Set emulator memory
         data = ord(process.readBytes(buf + i, 1))
-        ir_emulator.write_memory(buf + i, 8, data)
+        ir_emulator.write_memory(buf + i, 1, data)
 
         # print("Read @ %x : %02x (%s)" % (buf + i, data, chr(data)))
 
@@ -128,7 +128,7 @@ def fread_handler(event, process, ir_emulator, initial_taints, open_files, addrs
 
         # Set emulator memory
         data = ord(process.readBytes(buf + i, 1))
-        ir_emulator.write_memory(buf + i, 8, data)
+        ir_emulator.write_memory(buf + i, 1, data)
 
         # print("Read @ %x : %02x (%s)" % (buf + i, data, chr(data)))
 
