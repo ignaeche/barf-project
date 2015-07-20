@@ -18,53 +18,54 @@ from hooks import process_event
 logger = logging.getLogger(__name__)
 
 
-def concretize_instruction(instruction, emulator):
-    if instruction.mnemonic not in [ReilMnemonic.LDM]:
+def concretize_instruction(emu, instr):
+    if instr.mnemonic not in [ReilMnemonic.LDM]:
 
-        curr_oprnd0 = instruction.operands[0]
-        curr_oprnd1 = instruction.operands[1]
+        oprnd0, _, oprnd1 = instr.operands
 
-        if isinstance(curr_oprnd0, ReilRegisterOperand) and \
-            not isinstance(curr_oprnd0, ReilEmptyOperand) and \
-            emulator.get_operand_taint(curr_oprnd0) == False:
+        if isinstance(oprnd0, ReilRegisterOperand) and \
+            not isinstance(oprnd0, ReilEmptyOperand) and \
+            emu.get_operand_taint(oprnd0) == False:
 
-            value = emulator.read_operand(curr_oprnd0)
-            new_oprnd0 = ReilImmediateOperand(value, curr_oprnd0.size)
+            value = emu.read_operand(oprnd0)
+            oprnd0_new = ReilImmediateOperand(value, oprnd0.size)
 
-            instruction.operands[0] = new_oprnd0
+            instr.operands[0] = oprnd0_new
 
-        elif isinstance(curr_oprnd1, ReilRegisterOperand) and \
-            not isinstance(curr_oprnd1, ReilEmptyOperand) and \
-            emulator.get_operand_taint(curr_oprnd1) == False:
+        elif isinstance(oprnd1, ReilRegisterOperand) and \
+            not isinstance(oprnd1, ReilEmptyOperand) and \
+            emu.get_operand_taint(oprnd1) == False:
 
-            value = emulator.read_operand(curr_oprnd1)
-            new_oprnd1 = ReilImmediateOperand(value, curr_oprnd1.size)
+            value = emu.read_operand(oprnd1)
+            oprnd1_new = ReilImmediateOperand(value, oprnd1.size)
 
-            instruction.operands[1] = new_oprnd1
+            instr.operands[1] = oprnd1_new
 
-    return instruction
+    return instr
 
-def process_reil_instruction(emulator, instr, trace, addrs_to_vars):
+def process_reil_instruction(emu, instr, trace, addrs_to_vars):
     oprnd0, _, oprnd2 = instr.operands
 
     timestamp = int(time.time())
 
     if instr.mnemonic == ReilMnemonic.LDM:
-        if isinstance(oprnd0, ReilRegisterOperand):
-            addr = emulator.read_operand(oprnd0)
-            size = oprnd2.size
+        addr = emu.read_operand(oprnd0)
+        size = oprnd2.size
 
-            if emulator.get_memory_taint(addr, size):
+        if emu.get_memory_taint(addr, size):
+            if isinstance(oprnd0, ReilRegisterOperand):
                 reg_name = oprnd0.name + "_" + str(addr)
-                oprnd_new = ReilRegisterOperand(reg_name, oprnd0.size)
-                instr.operands[0] = oprnd_new
+                oprnd0_new = ReilRegisterOperand(reg_name, oprnd0.size)
 
-                addrs_to_vars[addr].append((oprnd_new, size, timestamp))
+                instr.operands[0] = oprnd0_new
 
-                trace.append((instr, None, timestamp))
+                addrs_to_vars[addr].append((oprnd0_new, size, timestamp))
+
+            trace.append((instr, None, timestamp))
     elif instr.mnemonic == ReilMnemonic.JCC:
+        # Consider only conditional jumps, discard direct ones.
         if isinstance(oprnd0, ReilRegisterOperand):
-            if emulator.get_operand_taint(oprnd0):
+            if emu.get_operand_taint(oprnd0):
                 address = instr.address >> 0x8
 
                 print("  [+] Tainted JCC found @ 0x%08x" % address)
@@ -72,20 +73,18 @@ def process_reil_instruction(emulator, instr, trace, addrs_to_vars):
                 data = {
                     'address' : address,
                     'condition' : oprnd0,
-                    'value' : emulator.read_operand(oprnd0)
+                    'value' : emu.read_operand(oprnd0)
                 }
 
                 trace.append((instr, data, timestamp))
     else:
-        oprnds_taint = [emulator.get_operand_taint(oprnd)
-                            for oprnd in instr.operands]
+        # If there are tainted operands, add instruction to the trace.
+        if any([emu.get_operand_taint(o) for o in instr.operands]):
+            instr_concrete = concretize_instruction(emu, instr)
 
-        if any(oprnds_taint):
-            concrete_instr = concretize_instruction(instr, emulator)
+            trace.append((instr_concrete, None, timestamp))
 
-            trace.append((concrete_instr, None, timestamp))
-
-def instr_pre_hanlder(emu, instr, process):
+def instr_pre_handler(emu, instr, process):
     if instr.mnemonic == ReilMnemonic.LDM:
         base_addr = emu.read_operand(instr.operands[0])
 
@@ -109,13 +108,13 @@ def process_binary(barf, args, ea_start, ea_end):
     process = pcontrol.start_process(barf.binary, args, ea_start, ea_end, hooked_functions)
 
     barf.ir_translator.reset()
+    barf.ir_emulator.set_instruction_pre_handler(instr_pre_handler, process)
 
-    emulator = barf.ir_emulator
-    emulator.set_instruction_pre_handler(instr_pre_hanlder, process)
+    emu = barf.ir_emulator
 
     trace = []
     open_files = {}
-    initial_taints = []
+    memory_taints = []
     addrs_to_vars = defaultdict(lambda: [])
     addrs_to_files = {}
 
@@ -124,7 +123,7 @@ def process_binary(barf, args, ea_start, ea_end):
     while True:
         event = pcontrol.cont()
 
-        if process_event(process, event, emulator, initial_taints, open_files, addrs_to_files):
+        if process_event(process, event, emu, memory_taints, open_files, addrs_to_files):
             break
 
     # Start processing trace
@@ -133,7 +132,7 @@ def process_binary(barf, args, ea_start, ea_end):
         asm_instr = barf.disassembler.disassemble(process.readBytes(ip, 15), ip)
 
         # Set REIL emulator context.
-        emulator.registers = pcontrol.get_registers()
+        emu.registers = pcontrol.get_registers()
 
         # Process REIL instructions.
         #print("0x{0:08x} : {1}".format(ip, asm_instr))
@@ -145,13 +144,13 @@ def process_binary(barf, args, ea_start, ea_end):
             if reil_instr.mnemonic == ReilMnemonic.UNKN:
                 continue
 
-            emulator.execute_lite([reil_instr])
+            emu.execute_lite([reil_instr])
 
-            process_reil_instruction(emulator, reil_instr, trace, addrs_to_vars)
+            process_reil_instruction(emu, reil_instr, trace, addrs_to_vars)
 
         event = pcontrol.single_step()
 
-        process_event(process, event, emulator, initial_taints, open_files, addrs_to_files)
+        process_event(process, event, emu, memory_taints, open_files, addrs_to_files)
 
         if isinstance(event, ProcessExit):
             print("  [+] Process exit.")
@@ -165,7 +164,7 @@ def process_binary(barf, args, ea_start, ea_end):
 
     branches_taint_data = {
         'trace' : trace,
-        'initial_taints' : initial_taints,
+        'memory_taints' : memory_taints,
         'addrs_to_vars' : addrs_to_vars,
         'open_files' : open_files,
         'addrs_to_files' : addrs_to_files,
