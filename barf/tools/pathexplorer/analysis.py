@@ -22,6 +22,9 @@ def generate_input_files(c_analyzer, mem_exprs, open_files, addrs_to_files, iter
 
         # Mutate file content.
         for tainted_addr, mem_expr in sorted(mem_exprs.items()):
+            if tainted_addr not in addrs_to_files:
+                continue
+
             for pos in addrs_to_files[tainted_addr].get(fd, []):
                 file_content[pos] = c_analyzer.get_expr_value(mem_expr)
 
@@ -137,7 +140,7 @@ def analyze_tainted_branch_data(exploration, c_analyzer, branch_taint_data, iter
 
     open_files = branch_taint_data['open_files']
 
-    initial_taints = branch_taint_data['initial_taints']
+    memory_taints = branch_taint_data['memory_taints']
 
     addrs_to_vars = branch_taint_data['addrs_to_vars']
     addrs_to_files = branch_taint_data['addrs_to_files']
@@ -159,7 +162,7 @@ def analyze_tainted_branch_data(exploration, c_analyzer, branch_taint_data, iter
         # Add initial tainted addresses to the code analyzer.
         mem_exprs = {}
 
-        for tainted_addr, timestamp in initial_taints:
+        for tainted_addr, timestamp in memory_taints:
             if timestamp > branch_timestamp:
                     break
 
