@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 def concretize_instruction(emu, instr):
     if instr.mnemonic not in [ReilMnemonic.LDM]:
 
-        oprnd0, _, oprnd1 = instr.operands
+        oprnd0, oprnd1, _ = instr.operands
 
         if isinstance(oprnd0, ReilRegisterOperand) and \
             not isinstance(oprnd0, ReilEmptyOperand) and \
