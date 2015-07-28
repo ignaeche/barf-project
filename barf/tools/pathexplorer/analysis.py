@@ -53,7 +53,7 @@ def check_path(exploration, instrs_list, trace_id, branch_val, jcc_index, to_exp
     explored_trace = list(trace_id)
 
     explored_trace.append((instrs_list[jcc_index][0].address, branch_val == 0x0))
-    to_explore_trace.append((instrs_list[jcc_index][0].address, not(branch_val == 0x0)))
+    to_explore_trace.append((instrs_list[jcc_index][0].address, not branch_val == 0x0))
 
     exploration.add_to_explored(explored_trace)
 
@@ -72,7 +72,6 @@ def print_analysis_result(c_analyzer, testcase_dir, input_counter, iteration, id
     # Print results.
     ruler = "# {0} #".format("=" * 76)
     title = "{ruler}\n# {{title}}\n{ruler}".format(ruler=ruler)
-    footer = "{0}\n{0}".format("~" * 80)
 
     # Branch Information
     print(title.format(title="Branch Information"), file=analysis_file)
@@ -118,16 +117,18 @@ def get_branch_count(trace):
 
     return branch_count
 
-def get_branch_timestamp(trace, branch_index):
+def get_last_branch_timestamp(trace):
+    branch_index = 0
+    branch_count = get_branch_count(trace)
+
     branch_timestamp = None
-    index = 0
 
     for instr, _, timestamp in trace:
         if is_conditional_jump(instr):
-            if index == branch_index:
+            if branch_index == branch_count - 1:
                 branch_timestamp = timestamp
                 break
-            index += 1
+            branch_index += 1
 
     return branch_timestamp
 
@@ -136,10 +137,10 @@ def get_memory_expr(c_analyzer, memory_taints, addrs_to_vars, branch_timestamp):
 
     for tainted_addr, timestamp in memory_taints:
         if timestamp > branch_timestamp:
-                break
+            break
 
         for reg, access_size, timestamp2 in addrs_to_vars.get(tainted_addr, []):
-            if timestamp > branch_timestamp:
+            if timestamp2 > branch_timestamp:
                 continue
 
             addr_expr = c_analyzer.get_operand_var(reg)
@@ -149,24 +150,26 @@ def get_memory_expr(c_analyzer, memory_taints, addrs_to_vars, branch_timestamp):
 
     return mem_exprs
 
-def add_trace_to_analyzer(c_analyzer, trace, idx):
-    jcc_index = 0
+def add_trace_to_analyzer(c_analyzer, trace):
+    branch_index = 0
+    branch_count = get_branch_count(trace)
 
     for instr, data, _ in trace:
         if is_conditional_jump(instr):
+            # Unpack branch data.
             branch_addr = data['address']
             branch_cond = data['condition']
             branch_val = data['value']
 
-            if jcc_index == idx:
+            if branch_index == branch_count - 1:
                 break
 
             oprnd0_var = c_analyzer.get_operand_var(instr.operands[0])
             c_analyzer.add_constraint(oprnd0_var == branch_val)
 
-            jcc_index += 1
-
-        c_analyzer.add_instruction(instr)
+            branch_index += 1
+        else:
+            c_analyzer.add_instruction(instr)
 
     # Get a SMT variable for the branch condition.
     branch_cond_var = c_analyzer.get_operand_expr(branch_cond, mode="post")
@@ -174,24 +177,39 @@ def add_trace_to_analyzer(c_analyzer, trace, idx):
     # Set wanted branch condition.
     c_analyzer.set_postcondition(branch_cond_var != branch_val)
 
-    return jcc_index, branch_addr, branch_cond, branch_val
+    return branch_index, branch_addr, branch_cond, branch_val
 
-def generate_trace_id(trace, idx):
-    jcc_index = 0
+def generate_trace_id(trace):
+    branch_index = 0
+    branch_count = get_branch_count(trace)
+
     trace_id = []
 
     for instr, data, _ in trace:
         if is_conditional_jump(instr):
+            # Unpack branch data.
             branch_val = data['value']
 
-            if jcc_index == idx:
+            if branch_index == branch_count - 1:
                 break
 
             trace_id.append((instr.address, branch_val == 0x0))
 
-            jcc_index += 1
+            branch_index += 1
 
     return trace_id
+
+def generate_subtraces(trace):
+    subtraces = []
+    trace_curr = []
+
+    for data in trace:
+        trace_curr.append(data)
+
+        if is_conditional_jump(data[0]):
+            subtraces.append(list(trace_curr))
+
+    return subtraces
 
 def analyze_tainted_branch_data(exploration, c_analyzer, branch_taint_data, iteration, testcase_dir, input_counter):
     """For each input branch (which depends on tainted input), it
@@ -205,9 +223,7 @@ def analyze_tainted_branch_data(exploration, c_analyzer, branch_taint_data, iter
     trace = branch_taint_data['trace']
 
     open_files = branch_taint_data['open_files']
-
     memory_taints = branch_taint_data['memory_taints']
-
     addrs_to_vars = branch_taint_data['addrs_to_vars']
     addrs_to_files = branch_taint_data['addrs_to_files']
 
@@ -215,28 +231,28 @@ def analyze_tainted_branch_data(exploration, c_analyzer, branch_taint_data, iter
 
     print("  [+] Total tainted branches : %d" % branch_count)
 
-    for idx in xrange(0, branch_count):
+    for idx, subtrace in enumerate(generate_subtraces(trace)):
         logger.info("Branch analysis #{}".format(idx))
 
         print("  [+] Analysis branch: {}".format(idx))
 
         c_analyzer.reset(full=True)
 
-        # Get current branch timestamp
-        branch_timestamp = get_branch_timestamp(trace, idx)
+        # Get current branch timestamp.
+        branch_timestamp = get_last_branch_timestamp(subtrace)
 
         # Add initial tainted addresses to the code analyzer.
         mem_exprs = get_memory_expr(c_analyzer, memory_taints, addrs_to_vars, branch_timestamp)
 
         # Add instructions to the code analyzer.
-        jcc_index, branch_addr, branch_cond, branch_val = add_trace_to_analyzer(c_analyzer, trace, idx)
+        branch_index, branch_addr, _, branch_val = add_trace_to_analyzer(c_analyzer, subtrace)
 
-        # Check weather explore this path or not
-        trace_id = generate_trace_id(trace, idx)
+        # Check whether explore this path or not.
+        trace_id = generate_trace_id(subtrace)
 
         to_explore_trace = list(trace_id)
 
-        if not check_path(exploration, trace, trace_id, branch_val, jcc_index, to_explore_trace):
+        if not check_path(exploration, subtrace, trace_id, branch_val, branch_index, to_explore_trace):
             print("    [+] Ignoring path...")
             continue
 
@@ -248,6 +264,6 @@ def analyze_tainted_branch_data(exploration, c_analyzer, branch_taint_data, iter
             exploration.add_to_explore((to_explore_trace, File(*new_inputs[0])))
 
         # Print results
-        print_analysis_result(c_analyzer, testcase_dir, input_counter, iteration, idx, branch_addr, branch_val, trace, mem_exprs, new_inputs)
+        print_analysis_result(c_analyzer, testcase_dir, input_counter, iteration, idx, branch_addr, branch_val, subtrace, mem_exprs, new_inputs)
 
     print("{0}\n{0}".format("~" * 80))
