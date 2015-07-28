@@ -19,27 +19,30 @@ logger = logging.getLogger(__name__)
 
 
 def concretize_instruction(emu, instr):
-    if instr.mnemonic not in [ReilMnemonic.LDM]:
+    oprnd0, oprnd1, _ = instr.operands
 
-        oprnd0, oprnd1, _ = instr.operands
+    if instr.mnemonic == ReilMnemonic.LDM:
+        if isinstance(oprnd0, ReilRegisterOperand):
+            addr = emu.read_operand(oprnd0)
+            name = "{0}_{1:x}".format(oprnd0.name, addr)
 
+            instr.operands[0] = ReilRegisterOperand(name, oprnd0.size)
+    else:
         if isinstance(oprnd0, ReilRegisterOperand) and \
             not isinstance(oprnd0, ReilEmptyOperand) and \
-            emu.get_operand_taint(oprnd0) == False:
+            not emu.get_operand_taint(oprnd0):
 
             value = emu.read_operand(oprnd0)
-            oprnd0_new = ReilImmediateOperand(value, oprnd0.size)
 
-            instr.operands[0] = oprnd0_new
+            instr.operands[0] = ReilImmediateOperand(value, oprnd0.size)
 
         elif isinstance(oprnd1, ReilRegisterOperand) and \
             not isinstance(oprnd1, ReilEmptyOperand) and \
-            emu.get_operand_taint(oprnd1) == False:
+            not emu.get_operand_taint(oprnd1):
 
             value = emu.read_operand(oprnd1)
-            oprnd1_new = ReilImmediateOperand(value, oprnd1.size)
 
-            instr.operands[1] = oprnd1_new
+            instr.operands[1] = ReilImmediateOperand(value, oprnd1.size)
 
     return instr
 
@@ -53,15 +56,13 @@ def process_reil_instruction(emu, instr, trace, addrs_to_vars):
         size = oprnd2.size
 
         if emu.get_memory_taint(addr, size):
+            instr_concrete = concretize_instruction(emu, instr)
+
             if isinstance(oprnd0, ReilRegisterOperand):
-                reg_name = oprnd0.name + "_" + str(addr)
-                oprnd0_new = ReilRegisterOperand(reg_name, oprnd0.size)
+                oprnd0_concrete = instr_concrete.operands[0]
+                addrs_to_vars[addr].append((oprnd0_concrete, size, timestamp))
 
-                instr.operands[0] = oprnd0_new
-
-                addrs_to_vars[addr].append((oprnd0_new, size, timestamp))
-
-            trace.append((instr, None, timestamp))
+            trace.append((instr_concrete, None, timestamp))
     elif instr.mnemonic == ReilMnemonic.JCC:
         # Consider only conditional jumps, discard direct ones.
         if isinstance(oprnd0, ReilRegisterOperand):
@@ -78,7 +79,8 @@ def process_reil_instruction(emu, instr, trace, addrs_to_vars):
 
                 trace.append((instr, data, timestamp))
     else:
-        # If there are tainted operands, add instruction to the trace.
+        # If the instruction has at least a tainted operand, add it
+        # to the trace.
         if any([emu.get_operand_taint(o) for o in instr.operands]):
             instr_concrete = concretize_instruction(emu, instr)
 
