@@ -10,6 +10,11 @@ from barf.core.reil import ReilRegisterOperand
 
 logger = logging.getLogger(__name__)
 
+
+def is_conditional_jump(instr):
+    return  instr.mnemonic == ReilMnemonic.JCC and \
+            isinstance(instr.operands[0], ReilRegisterOperand)
+
 def generate_input_files(c_analyzer, mem_exprs, open_files, addrs_to_files, iteration, branch_index):
     new_inputs = []
 
@@ -118,14 +123,75 @@ def get_branch_timestamp(trace, branch_index):
     index = 0
 
     for instr, _, timestamp in trace:
-        if instr.mnemonic == ReilMnemonic.JCC and \
-            isinstance(instr.operands[0], ReilRegisterOperand):
+        if is_conditional_jump(instr):
             if index == branch_index:
                 branch_timestamp = timestamp
                 break
             index += 1
 
     return branch_timestamp
+
+def get_memory_expr(c_analyzer, memory_taints, addrs_to_vars, branch_timestamp):
+    mem_exprs = {}
+
+    for tainted_addr, timestamp in memory_taints:
+        if timestamp > branch_timestamp:
+                break
+
+        for reg, access_size, timestamp2 in addrs_to_vars.get(tainted_addr, []):
+            if timestamp > branch_timestamp:
+                continue
+
+            addr_expr = c_analyzer.get_operand_var(reg)
+            mem_expr = c_analyzer.get_memory_expr(addr_expr, access_size / 8, mode="pre")
+
+            mem_exprs[tainted_addr] = mem_expr
+
+    return mem_exprs
+
+def add_trace_to_analyzer(c_analyzer, trace, idx):
+    jcc_index = 0
+
+    for instr, data, _ in trace:
+        if is_conditional_jump(instr):
+            branch_addr = data['address']
+            branch_cond = data['condition']
+            branch_val = data['value']
+
+            if jcc_index == idx:
+                break
+
+            oprnd0_var = c_analyzer.get_operand_var(instr.operands[0])
+            c_analyzer.add_constraint(oprnd0_var == branch_val)
+
+            jcc_index += 1
+
+        c_analyzer.add_instruction(instr)
+
+    # Get a SMT variable for the branch condition.
+    branch_cond_var = c_analyzer.get_operand_expr(branch_cond, mode="post")
+
+    # Set wanted branch condition.
+    c_analyzer.set_postcondition(branch_cond_var != branch_val)
+
+    return jcc_index, branch_addr, branch_cond, branch_val
+
+def generate_trace_id(trace, idx):
+    jcc_index = 0
+    trace_id = []
+
+    for instr, data, _ in trace:
+        if is_conditional_jump(instr):
+            branch_val = data['value']
+
+            if jcc_index == idx:
+                break
+
+            trace_id.append((instr.address, branch_val == 0x0))
+
+            jcc_index += 1
+
+    return trace_id
 
 def analyze_tainted_branch_data(exploration, c_analyzer, branch_taint_data, iteration, testcase_dir, input_counter):
     """For each input branch (which depends on tainted input), it
@@ -160,51 +226,14 @@ def analyze_tainted_branch_data(exploration, c_analyzer, branch_taint_data, iter
         branch_timestamp = get_branch_timestamp(trace, idx)
 
         # Add initial tainted addresses to the code analyzer.
-        mem_exprs = {}
-
-        for tainted_addr, timestamp in memory_taints:
-            if timestamp > branch_timestamp:
-                    break
-
-            for reg, access_size, timestamp2 in addrs_to_vars.get(tainted_addr, []):
-                if timestamp > branch_timestamp:
-                    continue
-
-                addr_expr = c_analyzer.get_operand_var(reg)
-                mem_expr = c_analyzer.get_memory_expr(
-                                addr_expr, access_size / 8, mode="pre")
-
-                mem_exprs[tainted_addr] = mem_expr
+        mem_exprs = get_memory_expr(c_analyzer, memory_taints, addrs_to_vars, branch_timestamp)
 
         # Add instructions to the code analyzer.
-        jcc_index = 0
-        trace_id = []
-
-        for instr, data, _ in trace:
-            if instr.mnemonic == ReilMnemonic.JCC and \
-                isinstance(instr.operands[0], ReilRegisterOperand):
-                branch_addr = data['address']
-                branch_cond = data['condition']
-                branch_val = data['value']
-
-                if jcc_index == idx:
-                    break
-
-                oprnd0_var = c_analyzer.get_operand_var(instr.operands[0])
-                c_analyzer.add_constraint(oprnd0_var == branch_val)
-                trace_id.append((instr.address, branch_val == 0x0))
-
-                jcc_index += 1
-
-            c_analyzer.add_instruction(instr)
-
-        # Get a SMT variable for the branch condition.
-        branch_cond_var = c_analyzer.get_operand_expr(branch_cond, mode="post")
-
-        # Set wanted branch condition.
-        c_analyzer.set_postcondition(branch_cond_var != branch_val)
+        jcc_index, branch_addr, branch_cond, branch_val = add_trace_to_analyzer(c_analyzer, trace, idx)
 
         # Check weather explore this path or not
+        trace_id = generate_trace_id(trace, idx)
+
         to_explore_trace = list(trace_id)
 
         if not check_path(exploration, trace, trace_id, branch_val, jcc_index, to_explore_trace):
