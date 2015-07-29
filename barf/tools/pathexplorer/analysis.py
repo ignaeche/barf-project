@@ -153,7 +153,7 @@ def get_memory_expr(c_analyzer, memory_taints, addrs_to_vars, branch_timestamp):
                 continue
 
             addr_expr = c_analyzer.get_operand_var(reg)
-            mem_expr = c_analyzer.get_memory_expr(addr_expr, access_size / 8, mode="pre")
+            mem_expr = c_analyzer.get_memory_expr(addr_expr, access_size, mode="pre")
 
             mem_exprs[tainted_addr] = mem_expr
 
