@@ -46,7 +46,7 @@ def concretize_instruction(emu, instr):
 
     return instr
 
-def process_reil_instruction(emu, instr, trace, addrs_to_vars):
+def process_reil_instruction(emu, instr, trace, memory_taints):
     oprnd0, _, oprnd2 = instr.operands
 
     timestamp = int(time.time())
@@ -58,11 +58,18 @@ def process_reil_instruction(emu, instr, trace, addrs_to_vars):
         if emu.get_memory_taint(addr, size):
             instr_concrete = concretize_instruction(emu, instr)
 
-            if isinstance(oprnd0, ReilRegisterOperand):
-                oprnd0_concrete = instr_concrete.operands[0]
-                addrs_to_vars[addr].append((oprnd0_concrete, size, timestamp))
+            data = {
+                "address" : addr,
+                "file_data" : {},
+            }
 
-            trace.append((instr_concrete, None, timestamp))
+            for i in xrange(0, size):
+                addr2 = addr + i
+
+                if addr2 in memory_taints:
+                    data["file_data"][addr2] = memory_taints[addr2]
+
+            trace.append((instr_concrete, data, timestamp))
     elif instr.mnemonic == ReilMnemonic.JCC:
         # Consider only conditional jumps, discard direct ones.
         if isinstance(oprnd0, ReilRegisterOperand):
@@ -117,16 +124,14 @@ def trace_program(barf, args, ea_start, ea_end):
 
     trace = []
     open_files = {}
-    memory_taints = []
-    addrs_to_vars = defaultdict(lambda: [])
-    addrs_to_files = {}
+    memory_taints = {}
 
     print("[+] Start process tracing...")
     # Continue until the first taint
     while True:
         event = pcontrol.cont()
 
-        if process_event(process, event, emu, memory_taints, open_files, addrs_to_files):
+        if process_event(process, event, emu, memory_taints, open_files):
             break
 
     # Start processing trace
@@ -149,11 +154,11 @@ def trace_program(barf, args, ea_start, ea_end):
 
             emu.execute_lite([reil_instr])
 
-            process_reil_instruction(emu, reil_instr, trace, addrs_to_vars)
+            process_reil_instruction(emu, reil_instr, trace, memory_taints)
 
         event = pcontrol.single_step()
 
-        process_event(process, event, emu, memory_taints, open_files, addrs_to_files)
+        process_event(process, event, emu, memory_taints, open_files)
 
         if isinstance(event, ProcessExit):
             print("  [+] Process exit.")
@@ -168,9 +173,7 @@ def trace_program(barf, args, ea_start, ea_end):
     branches_taint_data = {
         'trace' : trace,
         'memory_taints' : memory_taints,
-        'addrs_to_vars' : addrs_to_vars,
         'open_files' : open_files,
-        'addrs_to_files' : addrs_to_files,
     }
 
     return branches_taint_data

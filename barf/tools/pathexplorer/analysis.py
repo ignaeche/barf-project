@@ -15,7 +15,8 @@ def is_conditional_jump(instr):
     return  instr.mnemonic == ReilMnemonic.JCC and \
             isinstance(instr.operands[0], ReilRegisterOperand)
 
-def generate_input_files(c_analyzer, mem_exprs, open_files, addrs_to_files, branch_index):
+def generate_input_files(c_analyzer, trace, trace_idx, mem_exprs, open_files):
+    # generate a new copy of each open file
     new_inputs = []
 
     for fd in open_files:
@@ -25,25 +26,66 @@ def generate_input_files(c_analyzer, mem_exprs, open_files, addrs_to_files, bran
         with open(filename, "rb") as f:
             file_content = bytearray(f.read())
 
-        # Mutate file content.
-        for tainted_addr, mem_expr in sorted(mem_exprs.items()):
-            if tainted_addr not in addrs_to_files:
-                continue
-
-            for pos in addrs_to_files[tainted_addr].get(fd, []):
-                file_content[pos] = c_analyzer.get_expr_value(mem_expr)
-
         # Generate new file name.
         full_name, extension = filename.split(".")
         base_name = full_name.split("_", 1)[0]
 
-        new_filename = base_name + "_%03d" % (branch_index) + "." + extension
+        new_filename = base_name + "_%03d" % (trace_idx) + "." + extension
 
         # Write new file.
         print("    [+] Generating new input file: %s" % new_filename)
 
         with open(new_filename, "wb") as f:
             f.write(file_content)
+
+    for fd in open_files:
+        # Read 'master' file.
+        filename = open_files[fd]['filename']
+
+        # Generate new file name.
+        full_name, extension = filename.split(".")
+        base_name = full_name.split("_", 1)[0]
+
+        new_filename = base_name + "_%03d" % (trace_idx) + "." + extension
+
+        with open(new_filename, "rb") as f:
+            file_content = bytearray(f.read())
+
+        # Write new file.
+        print("    [+] Mutating new input file: %s" % new_filename)
+
+        # Mutate file content.
+        for instr, data, _ in trace:
+            if instr.mnemonic == ReilMnemonic.LDM:
+                addr_tainted = data["address"]
+
+                value = c_analyzer.get_expr_value(mem_exprs[addr_tainted])
+
+                for addr2 in sorted(data["file_data"].keys()):
+                    fd2, off2 = data["file_data"][addr2]
+
+                    if fd2 != fd:
+                        break
+
+                    addr_off = addr2 - addr_tainted
+
+                    file_content[off2] = (value >> (addr_off * 8)) & 0xff
+
+        with open(new_filename, "wb") as f:
+            f.write(file_content)
+
+    for fd in open_files:
+        # Read 'master' file.
+        filename = open_files[fd]['filename']
+
+        # Generate new file name.
+        full_name, extension = filename.split(".")
+        base_name = full_name.split("_", 1)[0]
+
+        new_filename = base_name + "_%03d" % (trace_idx) + "." + extension
+
+        with open(new_filename, "rb") as f:
+            file_content = bytearray(f.read())
 
         new_inputs.append((filename, file_content))
 
@@ -66,12 +108,12 @@ def check_path(exploration, trace, trace_id, branch_data):
 
     return True
 
-def print_analysis_result(c_analyzer, testcase_dir, input_counter, idx, branch_data, trace, mem_exprs, new_inputs):
+def print_analysis_result(c_analyzer, trace, trace_idx, branch_data, mem_exprs, testcase_dir, input_counter, new_inputs):
     branch_addr = branch_data["address"]
     branch_val = branch_data["value"]
 
     # Analyze path
-    analysis_filename = testcase_dir + "/crash/branch_analysis_%03d_%03d.txt" % (input_counter, idx)
+    analysis_filename = testcase_dir + "/crash/branch_analysis_%03d_%03d.txt" % (input_counter, trace_idx)
     analysis_file = open(analysis_filename, "w")
 
     print("    [+] Generating analysis file: %s" % os.path.basename(analysis_filename))
@@ -82,7 +124,7 @@ def print_analysis_result(c_analyzer, testcase_dir, input_counter, idx, branch_d
 
     # Branch Information
     print(title.format(title="Branch Information"), file=analysis_file)
-    print("Branch number : %d" % idx, file=analysis_file)
+    print("Branch number : %d" % trace_idx, file=analysis_file)
     print("Branch address : 0x%08x" % branch_addr, file=analysis_file)
     print("Branch taken? : %s" % (branch_val == 0x1), file=analysis_file)
 
@@ -97,12 +139,16 @@ def print_analysis_result(c_analyzer, testcase_dir, input_counter, idx, branch_d
         return
 
     # Memory State
-    msg = "mem @ 0x{:08x} : {:02x} ({:s})"
+    msg = "mem @ 0x{:08x} : {:x} ({:s})"
     print(title.format(title="Memory State"), file=analysis_file)
     for tainted_addr, mem_expr in sorted(mem_exprs.items()):
         value = c_analyzer.get_expr_value(mem_expr)
 
-        print(msg.format(tainted_addr, value, chr(value)), file=analysis_file)
+        value_str = ""
+        for i in xrange(mem_expr.size / 8):
+            value_str += chr((value >> (i * 8)) & 0xff)
+
+        print(msg.format(tainted_addr, value, value_str), file=analysis_file)
 
     # New Input Files
     print(title.format(title="New Input Files"), file=analysis_file)
@@ -114,19 +160,18 @@ def print_analysis_result(c_analyzer, testcase_dir, input_counter, idx, branch_d
 
     analysis_file.close()
 
-def get_branch_count(trace):
+def get_conditional_branch_count(trace):
     branch_count = 0
 
     for instr, _, _ in trace:
-        if instr.mnemonic == ReilMnemonic.JCC and \
-            isinstance(instr.operands[0], ReilRegisterOperand):
+        if is_conditional_jump(instr):
             branch_count += 1
 
     return branch_count
 
 def get_last_branch_data(trace):
     branch_index = 0
-    branch_count = get_branch_count(trace)
+    branch_count = get_conditional_branch_count(trace)
 
     branch_data = None
 
@@ -141,27 +186,23 @@ def get_last_branch_data(trace):
 
     return branch_data
 
-def get_memory_expr(c_analyzer, memory_taints, addrs_to_vars, branch_timestamp):
+def get_memory_expr(c_analyzer, trace):
     mem_exprs = {}
 
-    for tainted_addr, timestamp in memory_taints:
-        if timestamp > branch_timestamp:
-            break
+    for instr, data, _ in trace:
+        if instr.mnemonic == ReilMnemonic.LDM and data:
+            addr_tainted = data["address"]
 
-        for reg, access_size, timestamp2 in addrs_to_vars.get(tainted_addr, []):
-            if timestamp2 > branch_timestamp:
-                continue
+            addr_expr = c_analyzer.get_operand_var(instr.operands[0])
+            mem_expr = c_analyzer.get_memory_expr(addr_expr, instr.operands[2].size / 8, mode="pre")
 
-            addr_expr = c_analyzer.get_operand_var(reg)
-            mem_expr = c_analyzer.get_memory_expr(addr_expr, access_size, mode="pre")
-
-            mem_exprs[tainted_addr] = mem_expr
+            mem_exprs[addr_tainted] = mem_expr
 
     return mem_exprs
 
 def add_trace_to_analyzer(c_analyzer, trace):
     branch_index = 0
-    branch_count = get_branch_count(trace)
+    branch_count = get_conditional_branch_count(trace)
 
     for instr, data, _ in trace:
         if is_conditional_jump(instr):
@@ -188,7 +229,7 @@ def add_trace_to_analyzer(c_analyzer, trace):
 
 def generate_trace_id(trace):
     branch_index = 0
-    branch_count = get_branch_count(trace)
+    branch_count = get_conditional_branch_count(trace)
 
     trace_id = []
 
@@ -227,13 +268,10 @@ def analyze_trace(exploration, c_analyzer, trace_data, testcase_dir, input_idx):
 
     # TODO: Remove superfluous instructions from the trace.
     trace = trace_data['trace']
-
     open_files = trace_data['open_files']
     memory_taints = trace_data['memory_taints']
-    addrs_to_vars = trace_data['addrs_to_vars']
-    addrs_to_files = trace_data['addrs_to_files']
 
-    branch_count = get_branch_count(trace)
+    branch_count = get_conditional_branch_count(trace)
 
     print("  [+] Total tainted branches : %d" % branch_count)
 
@@ -248,7 +286,7 @@ def analyze_trace(exploration, c_analyzer, trace_data, testcase_dir, input_idx):
         branch_data = get_last_branch_data(subtrace)
 
         # Add initial tainted addresses to the code analyzer.
-        mem_exprs = get_memory_expr(c_analyzer, memory_taints, addrs_to_vars, branch_data["timestamp"])
+        mem_exprs = get_memory_expr(c_analyzer, subtrace)
 
         # Add instructions to the code analyzer.
         add_trace_to_analyzer(c_analyzer, subtrace)
@@ -261,12 +299,12 @@ def analyze_trace(exploration, c_analyzer, trace_data, testcase_dir, input_idx):
             continue
 
         if c_analyzer.check() == 'sat':
-            new_inputs = generate_input_files(c_analyzer, mem_exprs, open_files, addrs_to_files, subtrace_idx)
+            new_inputs = generate_input_files(c_analyzer, subtrace, subtrace_idx, mem_exprs, open_files)
 
             exploration.add_to_explore((subtrace_id, File(*new_inputs[0])))
 
             # Print results
-            print_analysis_result(c_analyzer, testcase_dir, input_idx, subtrace_idx, branch_data, subtrace, mem_exprs, new_inputs)
+            print_analysis_result(c_analyzer, subtrace, subtrace_idx, branch_data, mem_exprs, testcase_dir, input_idx, new_inputs)
         else:
             exploration.add_to_explored(subtrace_id)
 
