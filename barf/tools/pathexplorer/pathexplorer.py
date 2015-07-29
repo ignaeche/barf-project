@@ -10,8 +10,8 @@ from barf import BARF
 from barf.core.dbg.testcase import prepare_inputs
 
 from exploration import ExplorationProcess
-from analysis import analyze_tainted_branch_data
-from tracing import process_binary
+from analysis import analyze_trace
+from tracing import trace_program
 
 logger = logging.getLogger(__name__)
 
@@ -42,16 +42,16 @@ def main(args):
     input_counter = 0
 
     inputs = prepare_inputs(barf.testcase["args"] + barf.testcase["files"])
-    branches_taint_data = process_binary(barf, inputs, ea_start, ea_end)
-    analyze_tainted_branch_data(exploration, barf.code_analyzer, branches_taint_data, 0, testcase_path, input_counter)
+    trace_data = trace_program(barf, inputs, ea_start, ea_end)
+    analyze_trace(exploration, barf.code_analyzer, trace_data, testcase_path, input_counter)
 
     input_counter += 1
 
     while exploration.new_to_explore():
         _, input_file = exploration.next_to_explore()
         inputs = prepare_inputs(barf.testcase["args"] + [input_file])
-        branches_taint_data = process_binary(barf, inputs, ea_start, ea_end)
-        analyze_tainted_branch_data(exploration, barf.code_analyzer, branches_taint_data, 0, testcase_path, input_counter)
+        trace_data = trace_program(barf, inputs, ea_start, ea_end)
+        analyze_trace(exploration, barf.code_analyzer, trace_data, testcase_path, input_counter)
         input_counter += 1
 
 
