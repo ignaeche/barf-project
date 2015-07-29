@@ -54,9 +54,6 @@ def read_handler(event, process, emulator, memory_taints, open_files, addrs_to_f
         d_entry[file_desc] = l_entry
         addrs_to_files[buf + i] = d_entry
 
-        # Set emulator memory.
-        emulator.write_memory(buf + i, 1, ord(process.readBytes(buf + i, 1)))
-
         # Taint memory address.
         emulator.set_memory_taint(buf + i, 1, True)
 

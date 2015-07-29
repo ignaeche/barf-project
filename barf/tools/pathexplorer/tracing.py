@@ -53,7 +53,7 @@ def process_reil_instruction(emu, instr, trace, addrs_to_vars):
 
     if instr.mnemonic == ReilMnemonic.LDM:
         addr = emu.read_operand(oprnd0)
-        size = oprnd2.size
+        size = oprnd2.size / 8
 
         if emu.get_memory_taint(addr, size):
             instr_concrete = concretize_instruction(emu, instr)
@@ -88,6 +88,7 @@ def process_reil_instruction(emu, instr, trace, addrs_to_vars):
 
 def instr_pre_handler(emu, instr, process):
     if instr.mnemonic == ReilMnemonic.LDM:
+        # Set emulator memory in case it hasn't been set previously.
         base_addr = emu.read_operand(instr.operands[0])
 
         for i in xrange(0, instr.operands[2].size / 8):
