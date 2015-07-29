@@ -99,7 +99,7 @@ def instr_pre_handler(emu, instr, process):
                 except:
                     logger.info("Error reading process memory @ 0x{:08x}".format(addr))
 
-def process_binary(barf, args, ea_start, ea_end):
+def trace_program(barf, args, ea_start, ea_end):
     """Executes the input binary and tracks Information about the
     branches that depends on input data.
 

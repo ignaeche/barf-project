@@ -15,7 +15,7 @@ def is_conditional_jump(instr):
     return  instr.mnemonic == ReilMnemonic.JCC and \
             isinstance(instr.operands[0], ReilRegisterOperand)
 
-def generate_input_files(c_analyzer, mem_exprs, open_files, addrs_to_files, iteration, branch_index):
+def generate_input_files(c_analyzer, mem_exprs, open_files, addrs_to_files, branch_index):
     new_inputs = []
 
     for fd in open_files:
@@ -37,7 +37,7 @@ def generate_input_files(c_analyzer, mem_exprs, open_files, addrs_to_files, iter
         full_name, extension = filename.split(".")
         base_name = full_name.split("_", 1)[0]
 
-        new_filename = base_name + "_%03d_%03d" % (iteration, branch_index) + "." + extension
+        new_filename = base_name + "_%03d" % (branch_index) + "." + extension
 
         # Write new file.
         print("    [+] Generating new input file: %s" % new_filename)
@@ -49,28 +49,29 @@ def generate_input_files(c_analyzer, mem_exprs, open_files, addrs_to_files, iter
 
     return new_inputs
 
-def check_path(exploration, trace, trace_id, branch_data, to_explore_trace):
+def check_path(exploration, trace, trace_id, branch_data):
     branch_index = branch_data["index"]
     branch_val = branch_data["value"]
 
     explored_trace = list(trace_id)
 
     explored_trace.append((trace[branch_index][0].address, branch_val == 0x0))
-    to_explore_trace.append((trace[branch_index][0].address, not branch_val == 0x0))
+    trace_id.append((trace[branch_index][0].address, not branch_val == 0x0))
 
     exploration.add_to_explored(explored_trace)
 
-    if exploration.was_explored(to_explore_trace) or exploration.will_be_explored(to_explore_trace):
+    if exploration.was_explored(trace_id) or \
+        exploration.will_be_explored(trace_id):
         return False
 
     return True
 
-def print_analysis_result(c_analyzer, testcase_dir, input_counter, iteration, idx, branch_data, trace, mem_exprs, new_inputs):
+def print_analysis_result(c_analyzer, testcase_dir, input_counter, idx, branch_data, trace, mem_exprs, new_inputs):
     branch_addr = branch_data["address"]
     branch_val = branch_data["value"]
 
     # Analyze path
-    analysis_filename = testcase_dir + "/crash/branch_analysis_%03d_%03d_%03d.txt" % (input_counter, iteration, idx)
+    analysis_filename = testcase_dir + "/crash/branch_analysis_%03d_%03d.txt" % (input_counter, idx)
     analysis_file = open(analysis_filename, "w")
 
     print("    [+] Generating analysis file: %s" % os.path.basename(analysis_filename))
@@ -217,30 +218,29 @@ def generate_subtraces(trace):
 
     return subtraces
 
-def analyze_tainted_branch_data(exploration, c_analyzer, branch_taint_data, iteration, testcase_dir, input_counter):
+def analyze_trace(exploration, c_analyzer, trace_data, testcase_dir, input_idx):
     """For each input branch (which depends on tainted input), it
     prints the values needed to avoid taking that branch.
 
     """
     print("[+] Start trace analysis...")
 
-    # TODO: Simplify tainted instructions, i.e, remove superfluous
-    # instructions.
-    trace = branch_taint_data['trace']
+    # TODO: Remove superfluous instructions from the trace.
+    trace = trace_data['trace']
 
-    open_files = branch_taint_data['open_files']
-    memory_taints = branch_taint_data['memory_taints']
-    addrs_to_vars = branch_taint_data['addrs_to_vars']
-    addrs_to_files = branch_taint_data['addrs_to_files']
+    open_files = trace_data['open_files']
+    memory_taints = trace_data['memory_taints']
+    addrs_to_vars = trace_data['addrs_to_vars']
+    addrs_to_files = trace_data['addrs_to_files']
 
     branch_count = get_branch_count(trace)
 
     print("  [+] Total tainted branches : %d" % branch_count)
 
-    for idx, subtrace in enumerate(generate_subtraces(trace)):
-        logger.info("Branch analysis #{}".format(idx))
+    for subtrace_idx, subtrace in enumerate(generate_subtraces(trace)):
+        logger.info("Branch analysis #{}".format(subtrace_idx))
 
-        print("  [+] Analysis branch: {}".format(idx))
+        print("  [+] Analysis branch: {}".format(subtrace_idx))
 
         c_analyzer.reset(full=True)
 
@@ -254,22 +254,20 @@ def analyze_tainted_branch_data(exploration, c_analyzer, branch_taint_data, iter
         add_trace_to_analyzer(c_analyzer, subtrace)
 
         # Check whether explore this path or not.
-        trace_id = generate_trace_id(subtrace)
+        subtrace_id = generate_trace_id(subtrace)
 
-        to_explore_trace = list(trace_id)
-
-        if not check_path(exploration, subtrace, trace_id, branch_data, to_explore_trace):
+        if not check_path(exploration, subtrace, subtrace_id, branch_data):
             print("    [+] Ignoring path...")
             continue
 
-        if c_analyzer.check() != 'sat':
-            new_inputs = []
-            exploration.add_to_explored(to_explore_trace)
-        else:
-            new_inputs = generate_input_files(c_analyzer, mem_exprs, open_files, addrs_to_files, iteration, idx)
-            exploration.add_to_explore((to_explore_trace, File(*new_inputs[0])))
+        if c_analyzer.check() == 'sat':
+            new_inputs = generate_input_files(c_analyzer, mem_exprs, open_files, addrs_to_files, subtrace_idx)
 
-        # Print results
-        print_analysis_result(c_analyzer, testcase_dir, input_counter, iteration, idx, branch_data, subtrace, mem_exprs, new_inputs)
+            exploration.add_to_explore((subtrace_id, File(*new_inputs[0])))
+
+            # Print results
+            print_analysis_result(c_analyzer, testcase_dir, input_idx, subtrace_idx, branch_data, subtrace, mem_exprs, new_inputs)
+        else:
+            exploration.add_to_explored(subtrace_id)
 
     print("{0}\n{0}".format("~" * 80))
