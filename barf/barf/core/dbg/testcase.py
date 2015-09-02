@@ -11,13 +11,48 @@ def prepare_inputs(inputs):
 
   return r
 
+
+def write_testcase(name, program, args, copy=False):
+  try:
+    os.mkdir(name)
+  except:
+    pass
+
+  os.chdir(name)
+  filename = "path.txt"
+  open(filename,"w").write(program)
+  
+  try:
+    os.mkdir("inputs")
+  except:
+    pass
+
+  os.chdir("inputs")
+  for i,arg in enumerate(args):
+    if "file:" in arg:
+      #print arg
+      arg = arg.replace("file:","")
+      assert(arg[0] == '/')
+      filename = os.path.split(arg)[-1]
+      #print filename
+      if copy:
+        shutil.copyfile(os.path.realpath(arg),  "file_"+filename)
+      else:
+        os.symlink(os.path.realpath(arg), "file_"+filename)
+      arg = filename
+
+    filename = "argv_"+str(i+1)+".symb"
+    open(filename,"w").write(arg)
+
+  os.chdir("../..") 
+
 def GetTestcase(dirf):
     testcase = dict()
     os.chdir(GetDir(dirf))
 
     testcase["filename"] = GetCmd(None)
 
-    os.chdir("crash")
+    os.chdir("inputs")
 
     testcase["envs"] = dict()
     testcase["args"] = GetArgs()
