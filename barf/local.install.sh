@@ -3,11 +3,11 @@
 temp_dir=dependencies
 
 # Install basic stuff
-#sudo apt-get install -y binutils-dev build-essential g++ nasm
-#sudo apt-get install -y python-setuptools python-dev python-ptrace
-#sudo apt-get install -y graphviz xdot
-#sudo apt-get install -y autoconf
-#sudo apt-get install -y libc6-dev-i386
+sudo apt-get install -y binutils-dev build-essential g++ nasm
+sudo apt-get install -y python-setuptools python-dev python-ptrace
+sudo apt-get install -y graphviz xdot
+sudo apt-get install -y autoconf
+sudo apt-get install -y libc6-dev-i386
 
 # Create temp directory
 rm -rf $temp_dir
@@ -15,19 +15,11 @@ mkdir $temp_dir
 cd $temp_dir
 
 # Install Capstone Core
-wget -nc "https://github.com/aquynh/capstone/archive/master.zip"
-unzip -o master.zip
-cd capstone-master/
-sed -i.bak 's/PREFIX ?= \/usr/PREFIX ?= ~\/.local\/lib\/python2.7\/site-packages\/capstone/g' Makefile
-sed -i.bak 's/LIBDIRARCH ?= lib/LIBDIRARCH ?= \./g' Makefile
-./make.sh install
-
-# Install Capstone Python Bindings
-cd bindings/python/
-rm ~/.local/lib/python2.7/site-packages/capstone/*.pyc -f
-rm ~/.local/lib/python2.7/site-packages/capstone/*.py -f
+wget -nc "https://pypi.python.org/packages/source/c/capstone/capstone-3.0.4.tar.gz"
+tar -xf capstone-3.0.4.tar.gz
+cd capstone-3.0.4
 python setup.py install --user
-cd ../../..
+cd ../../
 
 mkdir z3
 cd z3

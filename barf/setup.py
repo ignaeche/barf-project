@@ -9,7 +9,6 @@ setup(
     description      = 'A multiplatform open source Binary Analysis and Reverse engineering Framework',
     include_package_data = True,
     install_requires = [
-        'capstone',
         'networkx',
         'pefile',
         'pybfd',
