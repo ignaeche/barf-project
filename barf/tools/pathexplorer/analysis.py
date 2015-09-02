@@ -113,7 +113,7 @@ def print_analysis_result(c_analyzer, trace, trace_idx, branch_data, mem_exprs, 
     branch_val = branch_data["value"]
 
     # Analyze path
-    analysis_filename = testcase_dir + "/crash/branch_analysis_%03d_%03d.txt" % (input_counter, trace_idx)
+    analysis_filename = testcase_dir + "/inputs/branch_analysis_%03d_%03d.txt" % (input_counter, trace_idx)
     analysis_file = open(analysis_filename, "w")
 
     print("    [+] Generating analysis file: %s" % os.path.basename(analysis_filename))
