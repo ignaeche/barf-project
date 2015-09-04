@@ -75,13 +75,15 @@ def process_reil_instruction(emu, instr, trace, memory_taints):
         if isinstance(oprnd0, ReilRegisterOperand):
             if emu.get_operand_taint(oprnd0):
                 address = instr.address >> 0x8
+                value = emu.read_operand(oprnd0)
+                result = "taken" if value != 0 else "not taken"
 
-                print("  [+] Tainted JCC found @ 0x%08x" % address)
+                print("  [+] Tainted JCC found @ {:#x} ({})".format(address, result))
 
                 data = {
                     'address' : address,
                     'condition' : oprnd0,
-                    'value' : emu.read_operand(oprnd0)
+                    'value' : value
                 }
 
                 trace.append((instr, data, timestamp))
@@ -127,6 +129,7 @@ def trace_program(barf, args, ea_start, ea_end):
     memory_taints = {}
 
     print("[+] Start process tracing...")
+
     # Continue until the first taint
     while True:
         event = pcontrol.cont()

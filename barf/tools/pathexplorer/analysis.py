@@ -87,7 +87,7 @@ def generate_input_files(c_analyzer, trace, trace_idx, mem_exprs, open_files):
         with open(new_filename, "rb") as f:
             file_content = bytearray(f.read())
 
-        new_inputs.append((filename, file_content))
+        new_inputs.append((new_filename, file_content))
 
     return new_inputs
 
@@ -159,6 +159,16 @@ def print_analysis_result(c_analyzer, trace, trace_idx, branch_data, mem_exprs, 
         print("Content: %s" % file_content, file=analysis_file)
 
     analysis_file.close()
+
+	# Save SMT file.
+    smt_filename = testcase_dir + "/inputs/smt_%03d_%03d.smt2" % (input_counter, trace_idx)
+
+    print("    [+] Generating SMT file: %s" % os.path.basename(smt_filename))
+
+    with open(smt_filename, "w") as smt_file:
+        smt_file.write("{}\n".format("(set-logic QF_AUFBV)"))
+        smt_file.write("{}\n".format(str(c_analyzer._solver)))
+        smt_file.write("{}\n".format("(check-sat)"))
 
 def get_conditional_branch_count(trace):
     branch_count = 0
@@ -306,6 +316,8 @@ def analyze_trace(exploration, c_analyzer, trace_data, testcase_dir, input_idx):
             # Print results
             print_analysis_result(c_analyzer, subtrace, subtrace_idx, branch_data, mem_exprs, testcase_dir, input_idx, new_inputs)
         else:
+            print("    [+] Unsatisfiable path...")
+
             exploration.add_to_explored(subtrace_id)
 
     print("{0}\n{0}".format("~" * 80))
