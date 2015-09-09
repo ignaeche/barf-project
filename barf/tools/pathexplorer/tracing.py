@@ -76,9 +76,11 @@ def process_reil_instruction(emu, instr, trace, memory_taints):
             if emu.get_operand_taint(oprnd0):
                 address = instr.address >> 0x8
                 value = emu.read_operand(oprnd0)
-                result = "taken" if value != 0 else "not taken"
+                result = "not taken" if value == 0 else "taken"
+                target = emu.read_operand(oprnd2)
 
-                print("  [+] Tainted JCC found @ {:#x} ({})".format(address, result))
+                print(str(instr))
+                print("  [+] Tainted JCC found @ {:#x} ({}) (-> {:#x})".format(address, result, target))
 
                 data = {
                     'address' : address,
@@ -100,14 +102,21 @@ def instr_pre_handler(emu, instr, process):
         # Set emulator memory in case it hasn't been set previously.
         base_addr = emu.read_operand(instr.operands[0])
 
+        # print("[+] Loading data from process memory...")
         for i in xrange(0, instr.operands[2].size / 8):
             addr = base_addr + i
 
-            if not emu.memory.written(addr):
-                try:
-                    emu.write_memory(addr, 1, ord(process.readBytes(addr, 1)))
-                except:
-                    logger.info("Error reading process memory @ 0x{:08x}".format(addr))
+            # if not emu.memory.written(addr):
+            try:
+                data = ord(process.readBytes(addr, 1))
+
+                # print("  [{:#x}] = {:#02x}".format(addr, data))
+
+                emu.write_memory(addr, 1, data)
+            except:
+                # print("Error reading process memory @ 0x{:08x}".format(addr))
+
+                logger.info("Error reading process memory @ 0x{:08x}".format(addr))
 
 def trace_program(barf, args, ea_start, ea_end):
     """Executes the input binary and tracks Information about the

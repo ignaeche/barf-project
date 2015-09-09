@@ -87,7 +87,10 @@ def generate_input_files(c_analyzer, trace, trace_idx, mem_exprs, open_files):
         with open(new_filename, "rb") as f:
             file_content = bytearray(f.read())
 
-        new_inputs.append((new_filename, file_content))
+        print("    [+] New input file content: {}".format(file_content))
+
+        # TODO: Why is it filename and not new_filename? It's confusing.
+        new_inputs.append((filename, file_content))
 
     return new_inputs
 
@@ -224,6 +227,9 @@ def add_trace_to_analyzer(c_analyzer, trace):
             if branch_index == branch_count - 1:
                 break
 
+            taken = "taken" if branch_val else "not-taken"
+            print("Branch : {:#x} ({})".format(branch_addr, taken))
+
             oprnd0_var = c_analyzer.get_operand_var(instr.operands[0])
             c_analyzer.add_constraint(oprnd0_var == branch_val)
 
@@ -233,6 +239,10 @@ def add_trace_to_analyzer(c_analyzer, trace):
 
     # Get a SMT variable for the branch condition.
     branch_cond_var = c_analyzer.get_operand_expr(branch_cond, mode="post")
+
+    taken = "taken" if branch_val else "not-taken"
+    taken2 = "not-taken" if branch_val else "taken"
+    print("Branch : {:#x} ({} -> {})".format(branch_addr, taken, taken2))
 
     # Set wanted branch condition.
     c_analyzer.set_postcondition(branch_cond_var != branch_val)
