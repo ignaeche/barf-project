@@ -15,6 +15,11 @@ from tracing import trace_program
 
 logger = logging.getLogger(__name__)
 
+def print_input_file_content(inputs2):
+    with open(inputs2[0], "r") as f:
+        content = "".join(f.readlines())
+
+    print("[+] Input file content: {}".format(content))
 
 def main(args):
     """Main function.
@@ -42,6 +47,12 @@ def main(args):
     input_counter = 0
 
     inputs = prepare_inputs(barf.testcase["args"] + barf.testcase["files"])
+
+    ##
+    # print([str(i) for i in inputs])
+    print_input_file_content(inputs)
+    ##
+
     trace_data = trace_program(barf, inputs, ea_start, ea_end)
     analyze_trace(exploration, barf.code_analyzer, trace_data, testcase_path, input_counter)
 
@@ -50,6 +61,12 @@ def main(args):
     while exploration.new_to_explore():
         _, input_file = exploration.next_to_explore()
         inputs = prepare_inputs(barf.testcase["args"] + [input_file])
+
+        ##
+        # print([str(i) for i in inputs])
+        print_input_file_content(inputs)
+        ##
+
         trace_data = trace_program(barf, inputs, ea_start, ea_end)
         analyze_trace(exploration, barf.code_analyzer, trace_data, testcase_path, input_counter)
         input_counter += 1
