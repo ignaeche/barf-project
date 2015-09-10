@@ -15,11 +15,12 @@ from tracing import trace_program
 
 logger = logging.getLogger(__name__)
 
-def print_input_file_content(inputs2):
-    with open(inputs2[0], "r") as f:
-        content = "".join(f.readlines())
+def print_input_file_content(inputs):
+    if len(inputs) > 0:
+        with open(inputs[0], "r") as f:
+            content = "".join(f.readlines())
 
-    print("[+] Input file content: {}".format(content))
+        print("[+] Input file content: {}".format(content))
 
 def main(args):
     """Main function.
