@@ -12,6 +12,7 @@ from barf.core.reil import ReilEmptyOperand
 from barf.core.reil import ReilImmediateOperand
 from barf.core.reil import ReilMnemonic
 from barf.core.reil import ReilRegisterOperand
+from barf.core.reil import split_address
 
 from hooks import process_event
 
@@ -74,16 +75,15 @@ def process_reil_instruction(emu, instr, trace, memory_taints):
         # Consider only conditional jumps, discard direct ones.
         if isinstance(oprnd0, ReilRegisterOperand):
             if emu.get_operand_taint(oprnd0):
-                address = instr.address >> 0x8
+                address_main, address_index = split_address(instr.address)
                 value = emu.read_operand(oprnd0)
+                target_main, target_index = split_address(emu.read_operand(oprnd2))
                 result = "not taken" if value == 0 else "taken"
-                target = emu.read_operand(oprnd2)
 
-                print(str(instr))
-                print("  [+] Tainted JCC found @ {:#x} ({}) (-> {:#x})".format(address, result, target))
+                print("  [+] Tainted JCC found @ {:#x}.{:02x} with target {:#x}.{:02x} ({})".format(address_main, address_index, target_main, target_index, result))
 
                 data = {
-                    'address' : address,
+                    'address' : address_main,
                     'condition' : oprnd0,
                     'value' : value
                 }
@@ -99,23 +99,15 @@ def process_reil_instruction(emu, instr, trace, memory_taints):
 
 def instr_pre_handler(emu, instr, process):
     if instr.mnemonic == ReilMnemonic.LDM:
-        # Set emulator memory in case it hasn't been set previously.
+        # Set emulator memory to match current process memory.
         base_addr = emu.read_operand(instr.operands[0])
 
-        # print("[+] Loading data from process memory...")
         for i in xrange(0, instr.operands[2].size / 8):
             addr = base_addr + i
 
-            # if not emu.memory.written(addr):
             try:
-                data = ord(process.readBytes(addr, 1))
-
-                # print("  [{:#x}] = {:#02x}".format(addr, data))
-
-                emu.write_memory(addr, 1, data)
+                emu.write_memory(addr, 1, ord(process.readBytes(addr, 1)))
             except:
-                # print("Error reading process memory @ 0x{:08x}".format(addr))
-
                 logger.info("Error reading process memory @ 0x{:08x}".format(addr))
 
 def trace_program(barf, args, ea_start, ea_end):
@@ -155,7 +147,7 @@ def trace_program(barf, args, ea_start, ea_end):
         emu.registers = pcontrol.get_registers()
 
         # Process REIL instructions.
-        #print("0x{0:08x} : {1}".format(ip, asm_instr))
+        # print("0x{0:08x} : {1}".format(ip, asm_instr))
 
         for reil_instr in barf.ir_translator.translate(asm_instr):
             # print("{0:14}{1}".format("", reil_instr))
