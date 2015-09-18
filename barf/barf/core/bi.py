@@ -34,8 +34,8 @@ import os
 from pefile import PE
 from pybfd.bfd import Bfd
 
-import misc as misc
 import barf.arch as arch
+import barf.core.misc as misc
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,7 @@ class Memory(object):
                     val += self.read_function(addr, 0x1)[0]
             except IndexError as reason:
                 print "[-] Index out of range : %s" % hex(addr)
-                #raise IndexError(reason)
+                raise IndexError(reason)
         elif isinstance(key, int):
             val += self.read_function(key, 0x1)[0]
         else:
@@ -82,7 +82,7 @@ class BinaryFile(object):
     """Binary file representation.
     """
 
-    def __init__(self, filename, deps = True):
+    def __init__(self, filename, deps=True):
 
         # File name of the binary file.
         self._filename = filename
@@ -108,7 +108,6 @@ class BinaryFile(object):
         # Open file
         if filename:
             self._open(filename)
-
 
     @property
     def start_address(self):
@@ -160,18 +159,17 @@ class BinaryFile(object):
         """
         return self._section_text_memory
 
-
     def _open(self, filename):
         # FIXME: Ugly hack to support PE files. Remove when pybfd
         # support PEs.
         try:
-
             #bfd = Bfd("/lib/i386-linux-gnu/libc.so.6")
             #self._libc_symbols = bfd.symbols
             #x = map(lambda (x,y): (y.name,x), bfd.symbols.items())
             #x = reversed(x)
 
             #self._libc_symbols = dict(x)
+
             bfd = Bfd(filename)
 
             self._sections = bfd.sections
@@ -211,6 +209,7 @@ class BinaryFile(object):
             """
         except:
             logger.error("BFD could not open the file.", exc_info=True)
+
             pass
 
         try:
@@ -347,5 +346,3 @@ class LibC(object):
  
 LibC = LibC()
  
-
-
