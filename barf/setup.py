@@ -4,11 +4,11 @@ from setuptools import setup
 from setuptools import find_packages
 
 setup(
-    author           = 'Christian Heitman',
-    author_email     = 'cnheitman@fundacionsadosky.org.ar',
-    description      = 'A multiplatform open source Binary Analysis and Reverse engineering Framework',
+    author               = 'Christian Heitman',
+    author_email         = 'cnheitman@fundacionsadosky.org.ar',
+    description          = 'A multiplatform open source Binary Analysis and Reverse engineering Framework',
     include_package_data = True,
-    install_requires = [
+    install_requires     = [
         'networkx',
         'pefile',
         'pybfd',
@@ -17,13 +17,13 @@ setup(
         'pyparsing',
         'sphinx',
     ],
-    license          = 'BSD 2-Clause',
-    name             = 'barf',
-    packages         = find_packages(),
-    url              = 'http://github.com/programa-stic/barf-project',
-    scripts          = [
+    license              = 'BSD 2-Clause',
+    name                 = 'barf',
+    packages             = find_packages(),
+    url                  = 'http://github.com/programa-stic/barf-project',
+    scripts              = [
         'tools/gadgets/BARFgadgets'
     ],
-    version          = '0.2',
-    zip_safe         = False
+    version              = '0.2',
+    zip_safe             = False
 )

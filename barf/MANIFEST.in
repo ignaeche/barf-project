@@ -1,2 +1,1 @@
 recursive-include barf/core/dbg *
-recursive-include barf/log *
