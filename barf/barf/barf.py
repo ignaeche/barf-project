@@ -30,6 +30,7 @@ import logging
 import os
 import sys
 import time
+
 import arch
 
 from analysis.basicblock import BasicBlockBuilder
@@ -46,7 +47,6 @@ from arch.x86.x86disassembler import X86Disassembler
 from arch.x86.x86translator import X86Translator
 from core.bi import BinaryFile
 from core.reil import ReilEmulator
-from core.smt.smtlibv2 import Z3Solver
 from core.smt.smtlibv2 import CVC4Solver
 from core.smt.smtlibv2 import Z3Solver
 from core.dbg.debugger import ProcessControl, ProcessExit, ProcessSignal, ProcessEnd
@@ -59,7 +59,6 @@ logger = logging.getLogger(__name__)
 SMT_SOLVER = "Z3"
 # SMT_SOLVER = "CVC4"
 # SMT_SOLVER = None
-
 
 class BARF(object):
     """Binary Analysis Framework."""
@@ -187,10 +186,7 @@ class BARF(object):
 
             self._load()
 
-
     def execute(self,ea_start=None, ea_end=None):
-
-
         if self.testcase is None:
             print "No testcase specified. Execution impossible"
             sys.exit(-1)
