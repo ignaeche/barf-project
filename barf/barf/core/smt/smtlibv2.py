@@ -526,7 +526,6 @@ class Z3Solver(object):
         self._declarations = {} #weakref.WeakValueDictionary()
         self._constraints = set()
         self.input_symbols = list()
-        #assert(0)
         self._z3_path = '~/.local/bin/z3'
         self._proc = Popen(self._z3_path + ' -t:120 -smt2 -in', shell=True, stdin=PIPE, stdout=PIPE)
 
