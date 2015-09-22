@@ -526,8 +526,7 @@ class Z3Solver(object):
         self._declarations = {} #weakref.WeakValueDictionary()
         self._constraints = set()
         self.input_symbols = list()
-        self._z3_path = '~/.local/bin/z3'
-        self._proc = Popen(self._z3_path + ' -t:120 -smt2 -in', shell=True, stdin=PIPE, stdout=PIPE)
+        self._proc = Popen('z3 -t:120 -smt2 -in', shell=True, stdin=PIPE, stdout=PIPE)
 
         # Fix z3 declaration scopes
         self._send("(set-option :global-decls false)")
@@ -550,7 +549,7 @@ class Z3Solver(object):
         self._constraints = state['constraints']
         self._stack = state['stack']
         self.input_symbols = state['input_symbols']
-        self._proc = Popen(self._z3_path + ' -t:120 -smt2 -in', shell=True, stdin=PIPE, stdout=PIPE)
+        self._proc = Popen('z3 -t:120 -smt2 -in', shell=True, stdin=PIPE, stdout=PIPE)
 
     def reset(self, full=False):
         self._send("(reset)")
@@ -567,7 +566,7 @@ class Z3Solver(object):
             self._declarations = {}
             self._constraints = set()
             self.input_symbols = list()
-            self._proc = Popen(self._z3_path + ' -t:120 -smt2 -in', shell=True, stdin=PIPE, stdout=PIPE)
+            self._proc = Popen('z3 -t:120 -smt2 -in', shell=True, stdin=PIPE, stdout=PIPE)
 
             # Fix z3 declaration scopes
             self._send("(set-option :global-decls false)")
