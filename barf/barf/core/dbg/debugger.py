@@ -26,26 +26,44 @@
 """
 import platform
 
+from ptrace.ctypes_tools import formatAddress
+from ptrace.debugger import PtraceDebugger
+from ptrace.error import PtraceError
 from signal import SIGTRAP
-from time import sleep
 
 import barf.arch as arch
 
 from barf.arch.x86.x86base import X86ArchitectureInformation
 from barf.core.bi import LibC
-from run import createChild
-from event import *
-from ptrace.debugger import PtraceDebugger
-from ptrace.error import PtraceError
-from ptrace.ctypes_tools import (truncateWord, formatWordHex, formatAddress,
-                                 formatAddressRange, word2bytes)
+from barf.core.dbg.event import Call
+from barf.core.dbg.event import ProcessEnd
+from barf.core.dbg.event import ProcessExit
+from barf.core.dbg.event import ProcessSignal
+from barf.core.dbg.run import createChild
+from barf.utils.utils import extract_value
+
 
 class Debugger(PtraceDebugger):
     pass
 
+
 class ProcessControl(object):
+
     def __init__(self):
+        self._guest_arch = None
+        self.arch = None
+        self.arch_mode = None
+        self.args = None
+        self.binary = None
+        self.ea_end = None
+        self.ea_start = None
+        self.filename = None
+        self.hooked_functions = None
+        self.libs_start = None
+        self.mm = None
+
         self.dbg = Debugger()
+
         self.process = None
         self.last_signal = []
 
@@ -55,7 +73,7 @@ class ProcessControl(object):
 
         self._host_arch = self._get_host_architecture_information()
 
-    def start_process(self, binary, args, ea_start, ea_end, hooked_functions = []):
+    def start_process(self, binary, args, ea_start, ea_end, hooked_functions=[]):
         self.binary = binary
 
         self.arch = self.binary.architecture
@@ -73,7 +91,7 @@ class ProcessControl(object):
             ea_start = self.binary.start_address
 
         self.ea_start = ea_start
-        self.ea_end   = ea_end
+        self.ea_end = ea_end
         self.hooked_functions = dict()
 
         pid = createChild([self.filename]+self.args, 0)
@@ -93,11 +111,11 @@ class ProcessControl(object):
         lib_symbols = LibC.symbols
 
         for func in hooked_functions:
-                if func in lib_symbols:
-                    addr = self.libs_start[lib_filename] + lib_symbols[func]
-                    self.breakpoint(addr)
-                    self.hooked_functions[addr] = func, lib_filename
-                    # print "[+] Hooking",func,"at",hex(addr), lib_filename#, self.libs_start[lib_filename], self.libs_start[lib_filename]
+            if func in lib_symbols:
+                addr = self.libs_start[lib_filename] + lib_symbols[func]
+
+                self.breakpoint(addr)
+                self.hooked_functions[addr] = func, lib_filename
 
         return self.process
 
@@ -117,6 +135,7 @@ class ProcessControl(object):
         if signum:
             error("Send %s to %s" % (signalName(signum), process))
             process.cont(signum)
+
             try:
                 del self.last_signal[process]
             except KeyError:
@@ -128,20 +147,19 @@ class ProcessControl(object):
         event = None
         process = self.process
         process.syscall_state.clear()
+
         if process == self.process:
             self._continue_process(process, signum)
         else:
-            self._continueProcess(process)
-
-        #print process.getInstrPointer()
+            self._continue_process(process)
 
         signal = self.dbg.waitSignals()
+
         if signal.signum == SIGTRAP:
             ip = process.getInstrPointer()
             ip = ip - 1
 
             if ip in self.hooked_functions:
-                # print "ENTERING HOOK FUNCTION"
                 call_ip = ip
 
                 # remove call breakpoint
@@ -154,10 +172,7 @@ class ProcessControl(object):
                 event.detect_parameters(self.process)
                 event.detect_return_address(self.process)
 
-                #print event.name, map(hex,event.param_values)
-
                 return_address = event.get_return_address()
-                #print "adding:", hex(return_address)
 
                 # hook return address
                 self.breakpoint(return_address)
@@ -174,7 +189,6 @@ class ProcessControl(object):
 
                 return_ip = ip
 
-                #print "removing:", hex(return_ip)
                 assert(return_address == return_ip)
 
                 # remove return breakpoint
@@ -189,7 +203,7 @@ class ProcessControl(object):
 
         return event
 
-    def single_step(self,signum=None):
+    def single_step(self, signum=None):
         event = None
         process = self.process
         process.syscall_state.clear()
@@ -205,122 +219,97 @@ class ProcessControl(object):
         ip = ip - 1
 
         if ip in self.hooked_functions:
-                print "ENTERING HOOK FUNCTION"
-                self.last_call_ip = ip
+            self.last_call_ip = ip
 
-                # remove call breakpoint
-                breakpoint = self.process.findBreakpoint(self.last_call_ip)
-                breakpoint.desinstall(set_ip=True)
+            # remove call breakpoint
+            breakpoint = self.process.findBreakpoint(self.last_call_ip)
+            breakpoint.desinstall(set_ip=True)
 
-                # extract argument
-                name, module = self.hooked_functions[ip]
-                event = Call(name, module, (self.arch, self.arch_mode))
-                event.detect_parameters(self.process)
-                event.detect_return_address(self.process)
+            # extract argument
+            name, module = self.hooked_functions[ip]
+            event = Call(name, module, (self.arch, self.arch_mode))
+            event.detect_parameters(self.process)
+            event.detect_return_address(self.process)
 
-                self.last_event = event
+            self.last_event = event
+            self.last_return_ip = event.get_return_address()
 
-                #print event.name, map(hex,event.param_values)
+            # hook return address
+            self.breakpoint(self.last_return_ip)
 
-                self.last_return_ip = event.get_return_address()
-                #print "adding:", hex(return_address)
-
-                # hook return address
-                self.breakpoint(self.last_return_ip)
-
-                return None
-
-                # continue until return
-                #self.process.cont()
-                #self.dbg.waitProcessEvent()
+            return None
 
         elif ip == self.last_return_ip:
-                # extract return value
-                print self.last_return_ip, self.last_event, hex(ip)
-                #print hex(ip)
+            # extract return value
+            print self.last_return_ip, self.last_event, hex(ip)
 
-                assert(self.last_event is not None)
-                assert(self.last_return_ip is not None)
+            assert(self.last_event is not None)
+            assert(self.last_return_ip is not None)
 
-                self.last_event.detect_return_value(self.process)
+            self.last_event.detect_return_value(self.process)
 
-                #ip = process.getInstrPointer()
-                #ip = ip - 1
+            return_ip = ip
 
-                return_ip = ip
+            assert(self.last_return_ip == return_ip)
 
-                #print "removing:", hex(return_ip)
-                assert(self.last_return_ip == return_ip)
+            # remove return breakpoint
+            breakpoint = self.process.findBreakpoint(return_ip)
+            breakpoint.desinstall(set_ip=True)
 
-                # remove return breakpoint
-                breakpoint = self.process.findBreakpoint(return_ip)
-                breakpoint.desinstall(set_ip=True)
+            # reinstall call breakpoint
+            self.breakpoint(self.last_call_ip)
 
-                # reinstall call breakpoint
-                self.breakpoint(self.last_call_ip)
+            self.last_call_ip = None
+            self.last_return_ip = None
+            self.last_event = None
 
-                self.last_call_ip = None
-                self.last_return_ip = None
-                self.last_event = None
-
-                return event
+            return event
 
     def breakpoint(self, address):
-
         process = self.process
+
         # Create breakpoint
         size = None
+
         try:
             bp = process.createBreakpoint(address, size)
         except PtraceError, err:
             return "Unable to set breakpoint at %s: %s" % (
                 formatAddress(address), err)
-        #error("New breakpoint: %s" % bp)
+
         return bp
 
     def get_registers(self):
         context = {}
-        #print "mapper:",mapper
+
         for reg in self._guest_arch.registers_gp_base:
             # FIXME: Temporary ugly hack...
             if reg == 'rflags':
                 continue
 
-            #print "reg",reg
             if reg in self._host_arch.alias_mapper:
                 base, offset = self._host_arch.alias_mapper[reg]
             else:
                 base, offset = reg, 0
 
             value = self.process.getreg(base)
-            # print "base-value-offset", base, value, offset
-            context[reg] = self._extract_value(value, offset, 32)
-
+            context[reg] = extract_value(value, offset, 32)
 
         value = self.process.getreg('eflags')
 
-        context['eflags'] = self._extract_value(value, 0, 32)
+        context['eflags'] = extract_value(value, 0, 32)
 
         return context
-
-    def _extract_value(self, main_value, offset, size):
-        return (main_value >> offset) & 2**size-1
-
-    def _insert_value(self, main_value, value_to_insert, offset, size):
-        main_value &= ~((2**size-1) << offset)
-        main_value |= (value_to_insert & 2**size-1) << offset
-
-        return main_value
 
     def _get_host_architecture_information(self):
         native_platform = platform.machine()
 
         if native_platform == 'i386':
-            host_arch_info = X86ArchitectureInformation(ARCH_X86_MODE_32)
+            host_arch_info = X86ArchitectureInformation(arch.ARCH_X86_MODE_32)
         if native_platform == 'i686':
-            host_arch_info = X86ArchitectureInformation(ARCH_X86_MODE_32)
+            host_arch_info = X86ArchitectureInformation(arch.ARCH_X86_MODE_32)
         elif native_platform == 'x86_64':
-            host_arch_info = X86ArchitectureInformation(ARCH_X86_MODE_64)
+            host_arch_info = X86ArchitectureInformation(arch.ARCH_X86_MODE_64)
         else:
             print("[-] Error executing at platform '%s'" % native_platform)
             exit(-1)

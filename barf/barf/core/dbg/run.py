@@ -1,18 +1,13 @@
-# -- coding: utf-8 --
-
-#from ptrace.debugger.child import createChild
-from os import system, dup2, close, open as fopen, O_RDONLY
-from sys import stdin
-from os import (
-    fork, execv, execve, getpid,
-    close, dup2, devnull, O_RDONLY)
-
-from ptrace.binding import ptrace_traceme
+from os import close
+from os import devnull
+from os import dup2
+from os import execv
+from os import execve
+from os import fork
 from ptrace import PtraceError
-
-from resource import getrlimit, setrlimit, RLIMIT_AS
-fds = []
-c = 0
+from ptrace.binding import ptrace_traceme
+from resource import RLIMIT_AS
+from resource import setrlimit
 
 
 class ChildError(RuntimeError):
@@ -53,81 +48,13 @@ def createChild(arguments, no_stdout, env=None):
     if pid:
         return pid
     else:
-        #print "limit",getrlimit(RLIMIT_DATA)
         setrlimit(RLIMIT_AS, (1024*1024*1024, -1))
-        #print "limit",getrlimit(RLIMIT_DATA)
 
         try:
-          ptrace_traceme()
+            ptrace_traceme()
         except PtraceError, err:
-          raise ChildError(str(err))
+            raise ChildError(str(err))
 
         _execChild(arguments, no_stdout, env)
+
         exit(255)
-
-
-def Launch(cmd, no_stdout, env):
-  global fds
-  global c
-  c = c + 1
-  #cmd = ["/usr/bin/timeout", "-k", "1", "3"]+cmd
-  #print cmd
-  if cmd[-1][0:2] == "< ":
-    filename = cmd[-1].replace("< ", "")
-
-    #try:
-    #  close(3)
-    #except OSError:
-    #  print "OsError!"
-    #  pass
-
-    for fd in fds:
-      #print fd,
-      try:
-        close(fd)
-        #print "closed!"
-      except OSError:
-        #print "failed close!"
-        pass
-
-    fds = []
-
-    desc = fopen(filename,O_RDONLY)
-    fds.append(desc)
-    dup2(desc, stdin.fileno())
-    fds.append(desc)
-    #close(desc)
-
-    cmd = cmd[:-1]
-
-  #print "c:", c
-  #print "self pid", getpid()
-
-  r = createChild(cmd, no_stdout, env)
-
-  #print "new pid", r
-  #print "self pid", getpid()
-  #print "Done!"
-
-  return r
-
-
-#class Runner:
-#    def __init__(self, cmd, timeout):
-#        #threading.Thread.__init__(self)
-#
-#        self.cmd = cmd
-#        self.timeout = timeout
-#
-#    def Run(self):
-#        #print self.cmd
-#        self.p = subprocess.call(self.cmd, shell=False)
-#        #self.p.wait()
-#        #self.join(self.timeout)
-#
-#        #if self.is_alive():
-#            #print "terminate: ", self.p.pid
-#            #self.p.kill()
-#            #self.join()
-#            #return True
-#        return True
