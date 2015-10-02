@@ -15,6 +15,7 @@ setup(
         'pydot',
         'pygments',
         'pyparsing',
+        'python-ptrace',
         'sphinx',
     ],
     license              = 'BSD 2-Clause',
