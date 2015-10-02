@@ -4,6 +4,7 @@ from __future__ import print_function
 import logging
 import os
 import sys
+import argparse
 
 from barf import BARF
 
@@ -26,10 +27,10 @@ def main(args):
     """Main function.
     """
     try:
-        testcase_path = os.path.abspath(args[1])
+        testcase_path = os.path.abspath(args.path)
 
-        ea_start = int(args.setdefault(2, "0x0"), 16)
-        ea_end = int(args.setdefault(3, "0x0"), 16)
+        ea_start = args.start
+        ea_end = args.end
 
         barf = BARF(testcase_path)
     except Exception as err:
@@ -83,4 +84,20 @@ if __name__ == "__main__":
         print("Hint: # echo 0 > /proc/sys/kernel/randomize_va_space")
         sys.exit(-1)
 
-    main(dict(enumerate(sys.argv)))
+    # Argument parsing
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument('path')
+    parser.add_argument('--manual', action='store_true')
+
+    hex_int = lambda x : int(x, 16)
+    parser.add_argument('--start', type=hex_int, default='0x0')
+    parser.add_argument('--end', type=hex_int, default='0x0')
+
+    args = parser.parse_args()
+
+    if args.manual:
+        # Manual exploration
+        print("Manual exploration")
+    else:
+        main(args)
