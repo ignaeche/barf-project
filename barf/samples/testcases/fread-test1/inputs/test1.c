@@ -22,7 +22,47 @@ int main(int argc, char * argv[]) {
         ERROR("fread");
     }
 
-    if (value != 0x41) {
+    if (value != 's') {
+        goto fail;
+    }
+
+    if (fread(&value, sizeof value, 1, file) == -1) {
+        ERROR("fread");
+    }
+
+    if (value != 'e') {
+        goto fail;
+    }
+
+    if (fread(&value, sizeof value, 1, file) == -1) {
+        ERROR("fread");
+    }
+
+    if (value != 'r') {
+        goto fail;
+    }
+
+    if (fread(&value, sizeof value, 1, file) == -1) {
+        ERROR("fread");
+    }
+
+    if (value != 'i') {
+        goto fail;
+    }
+
+    if (fread(&value, sizeof value, 1, file) == -1) {
+        ERROR("fread");
+    }
+
+    if (value != 'a') {
+        goto fail;
+    }
+
+    if (fread(&value, sizeof value, 1, file) == -1) {
+        ERROR("fread");
+    }
+
+    if (value != 'l') {
         goto fail;
     }
 
