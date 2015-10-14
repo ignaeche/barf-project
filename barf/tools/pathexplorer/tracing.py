@@ -20,14 +20,22 @@ logger = logging.getLogger(__name__)
 
 
 def concretize_instruction(emu, instr):
-    oprnd0, oprnd1, _ = instr.operands
+    oprnd0, oprnd1, oprnd2 = instr.operands
 
     if instr.mnemonic == ReilMnemonic.LDM:
         if isinstance(oprnd0, ReilRegisterOperand):
-            addr = emu.read_operand(oprnd0)
-            name = "{0}_{1:x}".format(oprnd0.name, addr)
+            # addr = emu.read_operand(oprnd0)
+            # name = "{0}_{1:x}".format(oprnd0.name, addr)
 
-            instr.operands[0] = ReilRegisterOperand(name, oprnd0.size)
+            # instr.operands[0] = ReilRegisterOperand(name, oprnd0.size)
+            value = emu.read_operand(oprnd0)
+
+            instr.operands[0] = ReilImmediateOperand(value, oprnd0.size)
+    elif instr.mnemonic == ReilMnemonic.STM:
+        if isinstance(oprnd2, ReilRegisterOperand):
+            value = emu.read_operand(oprnd2)
+
+            instr.operands[2] = ReilImmediateOperand(value, oprnd2.size)
     else:
         if isinstance(oprnd0, ReilRegisterOperand) and \
             not isinstance(oprnd0, ReilEmptyOperand) and \
@@ -106,7 +114,9 @@ def instr_pre_handler(emu, instr, process):
             addr = base_addr + i
 
             try:
-                emu.write_memory(addr, 1, ord(process.readBytes(addr, 1)))
+                content = ord(process.readBytes(addr, 1))
+
+                emu.write_memory(addr, 1, content)
             except:
                 logger.info("Error reading process memory @ 0x{:08x}".format(addr))
 
