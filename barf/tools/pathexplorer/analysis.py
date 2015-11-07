@@ -134,7 +134,7 @@ def print_analysis_result(c_analyzer, trace, trace_idx, branch_data, mem_exprs, 
     # Tainted Instructions
     print(title.format(title="Tainted Instructions"), file=analysis_file)
     for instr, _, _ in trace:
-        print(instr, file=analysis_file)
+        print("{:#x}.{:02x}  {}".format(instr.address >> 0x8, instr.address & 0xff, instr), file=analysis_file)
 
     if c_analyzer.check() != 'sat':
         print("UnSat Constraints!!!", file=analysis_file)

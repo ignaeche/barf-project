@@ -240,9 +240,6 @@ class ProcessControl(object):
             return None
 
         elif ip == self.last_return_ip:
-            # extract return value
-            print self.last_return_ip, self.last_event, hex(ip)
-
             assert(self.last_event is not None)
             assert(self.last_return_ip is not None)
 
